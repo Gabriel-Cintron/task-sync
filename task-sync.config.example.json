@@ -1,0 +1,45 @@
+{
+  "databasePath": "./data/task-sync.sqlite",
+  "enrichment": {
+    "mode": "fallback",
+    "model": "gpt-4.1-mini",
+    "inferredDueConfidence": 0.85,
+    "mappingConfidence": 0.8,
+    "maxDescriptionCharacters": 8000,
+    "allowedLabels": ["school", "needs-review"]
+  },
+  "sync": {
+    "completedSourceItems": "skip",
+    "missingSourceItems": "retain"
+  },
+  "destinations": {
+    "inbox": {},
+    "math": {
+      "projectId": "replace-with-todoist-project-id",
+      "sectionId": "replace-with-section-id"
+    }
+  },
+  "defaultDestinationKey": "inbox",
+  "courseMappings": [
+    {
+      "sourceType": "canvas",
+      "connectionId": "school-canvas",
+      "courseExternalId": "12345",
+      "destinationKey": "math"
+    },
+    {
+      "sourceType": "google_classroom",
+      "connectionId": "school-google",
+      "courseAlias": "algebra ii",
+      "destinationKey": "math"
+    }
+  ],
+  "sources": {
+    "canvas": {
+      "connectionId": "school-canvas"
+    },
+    "googleClassroom": {
+      "connectionId": "school-google"
+    }
+  }
+}

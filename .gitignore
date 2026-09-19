@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+data/
+secrets/
+google-oauth-token.json
+diagnostic-dumps/
+*.log
+.DS_Store

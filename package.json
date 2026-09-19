@@ -1,0 +1,39 @@
+{
+  "name": "school-obligations-task-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LLM-assisted Canvas and Google Classroom obligations sync for Todoist",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cli": "tsx src/cli.ts",
+    "sync": "tsx src/cli.ts sync",
+    "check:openai": "tsx src/cli.ts check openai",
+    "check:canvas": "tsx src/cli.ts check canvas",
+    "check:classroom": "tsx src/cli.ts check classroom",
+    "check:todoist": "tsx src/cli.ts check todoist"
+  },
+  "dependencies": {
+    "commander": "^14.0.1",
+    "dotenv": "^17.2.2",
+    "googleapis": "^160.0.0",
+    "openai": "^5.20.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "^24.3.1",
+    "eslint": "^9.35.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.42.0",
+    "tsx": "^4.20.5",
+    "vitest": "^3.2.4"
+  }
+}
