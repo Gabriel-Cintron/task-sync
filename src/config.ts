@@ -1,13 +1,13 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { z } from "zod";
 
-const DestinationSchema = z.object({
+export const DestinationSchema = z.object({
   projectId: z.string().min(1).optional(),
   sectionId: z.string().min(1).optional(),
 }).strict();
 
-const CourseMappingSchema = z.object({
+export const CourseMappingSchema = z.object({
   sourceType: z.string().min(1).optional(),
   connectionId: z.string().min(1).optional(),
   courseExternalId: z.string().min(1).optional(),
@@ -41,6 +41,8 @@ export const AppConfigSchema = z.object({
 }).strict();
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
+export type DestinationConfig = z.infer<typeof DestinationSchema>;
+export type CourseMappingConfig = z.infer<typeof CourseMappingSchema>;
 
 export function loadConfig(path = process.env.TASK_SYNC_CONFIG ?? "./task-sync.config.json"): AppConfig {
   let input: unknown = {};
@@ -58,4 +60,14 @@ export function loadConfig(path = process.env.TASK_SYNC_CONFIG ?? "./task-sync.c
       model: process.env.OPENAI_MODEL ?? parsed.enrichment.model,
     },
   };
+}
+
+export function saveConfig(path: string, value: unknown): AppConfig {
+  const parsed = AppConfigSchema.parse(value);
+  const target = resolve(path);
+  mkdirSync(dirname(target), { recursive: true });
+  const temporary = `${target}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(parsed, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, target);
+  return parsed;
 }

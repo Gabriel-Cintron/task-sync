@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { URL } from "node:url";
@@ -89,10 +89,11 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     private readonly tokenFile: string,
   ) {}
 
-  public async authorize(): Promise<void> {
+  public async authorize(options: { onAuthorizationUrl?: (url: string) => void } = {}): Promise<void> {
     const { client, redirectUri } = this.createClient();
     const authUrl = client.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: CLASSROOM_SCOPES });
-    process.stdout.write(`Open this URL to authorize Google Classroom:\n${authUrl}\n`);
+    if (options.onAuthorizationUrl) options.onAuthorizationUrl(authUrl);
+    else process.stdout.write(`Open this URL to authorize Google Classroom:\n${authUrl}\n`);
     const code = await new Promise<string>((resolve, reject) => {
       const redirect = new URL(redirectUri);
       const server = createServer((request, response) => {
@@ -101,24 +102,29 @@ export class GoogleClassroomAdapter implements SourceAdapter {
         const error = requestUrl.searchParams.get("error");
         if (error || !codeValue) {
           response.writeHead(400).end("Authorization failed. Return to the terminal.");
+          clearTimeout(timeout);
           server.close();
           reject(new ProviderError(error === "access_denied" ? "oauth_consent" : "application", error ?? "OAuth callback had no code"));
           return;
         }
         response.writeHead(200, { "Content-Type": "text/plain" }).end("Authorization complete. You can close this tab.");
+        clearTimeout(timeout);
         server.close();
         resolve(codeValue);
       });
-      server.on("error", reject);
-      server.listen(Number(redirect.port || 80), redirect.hostname);
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         server.close();
         reject(new ProviderError("oauth_consent", "Google authorization timed out"));
       }, 180_000).unref();
+      server.on("error", reject);
+      server.listen(Number(redirect.port), redirect.hostname);
     });
     const { tokens } = await client.getToken(code);
     mkdirSync(dirname(this.tokenFile), { recursive: true });
-    writeFileSync(this.tokenFile, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    const temporary = `${this.tokenFile}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    renameSync(temporary, this.tokenFile);
+    chmodSync(this.tokenFile, 0o600);
   }
 
   public async listItems(): Promise<ExternalItem[]> {
@@ -165,7 +171,7 @@ export class GoogleClassroomAdapter implements SourceAdapter {
       throw new ProviderError("configuration", `Cannot read Google OAuth client file: ${error instanceof Error ? error.message : "unknown error"}`);
     }
     const secret = ClientSecretSchema.parse(raw).installed;
-    const redirectUri = secret.redirect_uris.find((uri) => uri.startsWith("http://127.0.0.1")) ?? secret.redirect_uris[0]!;
+    const redirectUri = "http://127.0.0.1:53682/oauth2callback";
     return { client: new google.auth.OAuth2(secret.client_id, secret.client_secret, redirectUri), redirectUri };
   }
 

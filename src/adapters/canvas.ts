@@ -77,19 +77,24 @@ export class CanvasAdapter implements SourceAdapter {
   }
 
   public async listItems(): Promise<ExternalItem[]> {
-    const courses = await this.getAll("/api/v1/courses?enrollment_state=active&state[]=available&per_page=100", CanvasCourseSchema);
+    const courses = await this.listCourses();
     const items: ExternalItem[] = [];
     for (const course of courses) {
-      const courseId = String(course.id);
+      const courseId = course.externalId;
       const assignments = await this.getAll(
         `/api/v1/courses/${encodeURIComponent(courseId)}/assignments?include[]=submission&per_page=100`,
         CanvasAssignmentSchema,
       );
       for (const raw of assignments) {
-        items.push(normalizeCanvasAssignment(course, raw, this.connectionId));
+        items.push(normalizeCanvasAssignment({ id: course.externalId, name: course.name }, raw, this.connectionId));
       }
     }
     return items;
+  }
+
+  public async listCourses(): Promise<Array<{ externalId: string; name: string }>> {
+    const courses = await this.getAll("/api/v1/courses?enrollment_state=active&state[]=available&per_page=100", CanvasCourseSchema);
+    return courses.map((course) => ({ externalId: String(course.id), name: course.name }));
   }
 
   public async diagnose(): Promise<DiagnosticReport> {

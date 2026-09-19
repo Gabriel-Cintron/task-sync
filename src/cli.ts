@@ -1,22 +1,33 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { Command, Option } from "commander";
+import { resolve } from "node:path";
+import { TaskSyncApplication } from "./application/task-sync-application.js";
+import { SettingsStore } from "./application/settings-store.js";
 import { loadConfig } from "./config.js";
-import { createClassroomFromEnvironment, createSources, createTodoistFromEnvironment } from "./composition.js";
+import { createEnrichmentFromEnvironment } from "./composition.js";
 import { safeErrorMessage } from "./core/errors.js";
 import type { DiagnosticReport, EnrichmentService } from "./core/ports.js";
-import { CachedEnrichmentService } from "./enrichment/service.js";
-import { OpenAIEnrichmentGenerator } from "./enrichment/openai-generator.js";
+import type { ApplyResult, SyncPlan } from "./core/models.js";
 import { messyAssignmentFixture } from "./fixtures/messy-assignment.js";
 import { SqliteSyncRepository } from "./persistence/sqlite-repository.js";
-import { SyncEngine } from "./sync/engine.js";
 import { buildCandidate } from "./sync/policy.js";
-import { CanvasAdapter } from "./adapters/canvas.js";
 
 function createEnrichment(config: ReturnType<typeof loadConfig>, repository: SqliteSyncRepository): EnrichmentService {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const generator = apiKey ? new OpenAIEnrichmentGenerator(apiKey, config.enrichment.model) : undefined;
-  return new CachedEnrichmentService(repository, generator, config);
+  return createEnrichmentFromEnvironment(config, repository);
+}
+
+function createCliApplication(): TaskSyncApplication {
+  const root = process.cwd();
+  const configPath = resolve(process.env.TASK_SYNC_CONFIG ?? "./task-sync.config.json");
+  const config = loadConfig(configPath);
+  return new TaskSyncApplication(new SettingsStore({
+    root,
+    env: resolve(root, ".env"),
+    config: configPath,
+    database: resolve(config.databasePath),
+    secrets: root,
+  }), undefined, "cli");
 }
 
 function printDiagnostic(report: DiagnosticReport, json: boolean): void {
@@ -35,7 +46,7 @@ function actionCounts(actions: Array<{ kind: string }>): Record<string, number> 
   }, {});
 }
 
-function printSync(plan: Awaited<ReturnType<SyncEngine["plan"]>>, applied: Awaited<ReturnType<SyncEngine["apply"]>> | undefined, json: boolean): void {
+function printSync(plan: SyncPlan, applied: ApplyResult | undefined, json: boolean): void {
   if (json) {
     process.stdout.write(`${JSON.stringify({ plan, apply: applied ?? null }, null, 2)}\n`);
     return;
@@ -65,17 +76,11 @@ program.command("sync")
   .option("--json", "machine-readable output", false)
   .action(async (options: { source: "canvas" | "classroom" | "all"; apply: boolean; dryRun: boolean; forceReenrich: boolean; json: boolean }) => {
     if (options.apply && options.dryRun) throw new Error("Choose --apply or --dry-run, not both");
-    const config = loadConfig();
-    const repository = new SqliteSyncRepository(config.databasePath);
-    try {
-      const engine = new SyncEngine(repository, createEnrichment(config, repository), createTodoistFromEnvironment(), config);
-      const plan = await engine.plan(createSources(config, options.source), { forceReenrich: options.forceReenrich });
-      const result = options.apply ? await engine.apply(plan) : undefined;
-      printSync(plan, result, options.json);
-      if (plan.actions.some((action) => action.kind === "error" || action.kind === "conflict")) process.exitCode = 2;
-    } finally {
-      repository.close();
-    }
+    const application = createCliApplication();
+    const view = await application.createPlan({ source: options.source, forceReenrich: options.forceReenrich });
+    const result = options.apply ? await application.applyPlan({ planId: view.plan.id, digest: view.digest }) : undefined;
+    printSync(view.plan, result, options.json);
+    if (view.plan.actions.some((action) => action.kind === "error" || action.kind === "conflict")) process.exitCode = 2;
   });
 
 program.command("enrich-fixture")
@@ -97,41 +102,26 @@ const check = program.command("check").description("Run opt-in provider compatib
 check.command("openai")
   .option("--json", "machine-readable output", false)
   .action(async (options: { json: boolean }) => {
-    const config = loadConfig();
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY is required");
-    const enrichment = await new OpenAIEnrichmentGenerator(apiKey, config.enrichment.model).generate(messyAssignmentFixture, {
-      allowedLabels: config.enrichment.allowedLabels,
-      allowedProjectKeys: Object.keys(config.destinations),
-      maxDescriptionCharacters: config.enrichment.maxDescriptionCharacters,
-    });
-    printDiagnostic({ provider: "OpenAI", ok: true, checks: [
-      { name: "authentication", ok: true, detail: "Responses API accepted the key" },
-      { name: "structured output", ok: true, detail: `Strict enrichment schema returned a candidate titled “${enrichment.cleanedTitle}”` },
-    ] }, options.json);
+    printDiagnostic(await createCliApplication().diagnose("openai"), options.json);
   });
 
 check.command("canvas")
   .option("--json", "machine-readable output", false)
   .action(async (options: { json: boolean }) => {
-    const config = loadConfig();
-    const baseUrl = process.env.CANVAS_BASE_URL;
-    const token = process.env.CANVAS_ACCESS_TOKEN;
-    if (!baseUrl || !token) throw new Error("CANVAS_BASE_URL and CANVAS_ACCESS_TOKEN are required");
-    printDiagnostic(await new CanvasAdapter(config.sources.canvas.connectionId, baseUrl, token).diagnose(), options.json);
+    printDiagnostic(await createCliApplication().diagnose("canvas"), options.json);
   });
 
 check.command("classroom")
   .option("--json", "machine-readable output", false)
   .action(async (options: { json: boolean }) => {
-    printDiagnostic(await createClassroomFromEnvironment(loadConfig()).diagnose(), options.json);
+    printDiagnostic(await createCliApplication().diagnose("classroom"), options.json);
   });
 
 check.command("todoist")
   .option("--mutate", "create/update/delete a clearly labeled compatibility task", false)
   .option("--json", "machine-readable output", false)
   .action(async (options: { mutate: boolean; json: boolean }) => {
-    printDiagnostic(await createTodoistFromEnvironment().diagnose({ mutate: options.mutate }), options.json);
+    printDiagnostic(await createCliApplication().diagnose("todoist", { mutate: options.mutate }), options.json);
   });
 
 program.command("auth")
@@ -139,7 +129,7 @@ program.command("auth")
   .argument("<provider>", "provider name")
   .action(async (provider: string) => {
     if (provider !== "classroom") throw new Error("Only 'classroom' supports an interactive authorization command");
-    await createClassroomFromEnvironment(loadConfig()).authorize();
+    await createCliApplication().authorizeClassroom((url) => process.stdout.write(`Open this URL in a browser:\n${url}\n`));
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

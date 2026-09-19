@@ -1,11 +1,15 @@
 # School obligations → Todoist sync
 
-A personal-use TypeScript CLI that reads real assignments from Canvas and Google Classroom, optionally uses OpenAI to clean and classify them, and plans safe Todoist creates or updates. External writes are deterministic and opt-in.
+A local Electron desktop application and TypeScript CLI that read assignments from Canvas (and optionally Google Classroom), optionally use OpenAI to clean and classify them, and plan safe Todoist creates or updates. External writes are deterministic and opt-in.
 
-For installation, credential setup, first-run instructions, output interpretation, and troubleshooting, see the [complete usage guide](docs/USAGE.md).
+For the guided application, see the [desktop guide](docs/DESKTOP.md). For terminal setup and commands, see the [CLI usage guide](docs/USAGE.md).
 
 ## What is implemented
 
+- A packaged, framework-light Electron UI with guided onboarding, provider diagnostics, Canvas course discovery, Todoist destination mapping, exact-plan review/apply, and recent history.
+- A sandboxed renderer with context isolation, narrow Zod-validated IPC, local-only assets, restrictive CSP, denied permissions/navigation/downloads, hardened Electron fuses, and write-only credential fields.
+- Desktop-owned atomic settings/secrets, a validated copy-based CLI importer with backups/rollback, and platform-specific application-data paths.
+- Windows x64 Squirrel, macOS x64/arm64 DMG/ZIP, and Linux x64 DEB/ZIP packaging with unsigned GitHub release artifacts.
 - Canvas active-course and assignment reads, including current-user submission state and opaque `Link` pagination.
 - Google Classroom active-course, coursework, and current-student submission reads using read-only OAuth scopes.
 - OpenAI Responses API enrichment with strict Zod Structured Outputs, a versioned prompt/schema, privacy-conscious truncation, SQLite caching, provenance, and configurable failure policy.
@@ -164,6 +168,9 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
+npm run test:e2e
+npm run package:desktop
+npm run make:desktop
 npm run cli -- enrich-fixture
 ```
 

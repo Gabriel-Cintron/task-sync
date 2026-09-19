@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
+    <title>Task Sync</title>
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <div class="brand"><span class="brand-mark">TS</span><div><strong>Task Sync</strong><small>School work, sorted.</small></div></div>
+        <nav>
+          <button class="nav-item active" data-route="dashboard"><span aria-hidden="true">⌂</span> Dashboard</button>
+          <button class="nav-item" data-route="history"><span aria-hidden="true">↻</span> Recent history</button>
+          <button class="nav-item" data-route="settings"><span aria-hidden="true">⚙</span> Settings</button>
+        </nav>
+        <div class="sidebar-note"><span class="status-dot"></span><span>Local-only application</span></div>
+      </aside>
+      <main id="main" tabindex="-1"><div class="loading-panel"><div class="spinner"></div><p>Loading your workspace…</p></div></main>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/renderer.ts"></script>
+  </body>
+</html>

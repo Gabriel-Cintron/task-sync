@@ -28,6 +28,7 @@ export class SyncEngine {
     private readonly enrichment: EnrichmentService,
     private readonly todoist: TodoistDestination,
     private readonly config: AppConfig,
+    private readonly origin: "cli" | "desktop" = "cli",
   ) {}
 
   public async plan(sources: SourceAdapter[], options: { forceReenrich?: boolean } = {}): Promise<SyncPlan> {
@@ -104,15 +105,17 @@ export class SyncEngine {
       enrichment: enrichmentCounts,
     };
     this.repository.savePlan(plan);
-    const runId = this.repository.startRun("plan", plan.id);
+    const runId = this.repository.startRun("plan", plan.id, this.origin);
     for (const action of actions) this.repository.recordOutcome(runId, action.sourceKey, action.kind, action.reason);
-    this.repository.finishRun(runId, summary(actions.map((action) => ({ outcome: action.kind }))));
+    const runSummary = summary(actions.map((action) => ({ outcome: action.kind })));
+    runSummary.warning = actions.reduce((count, action) => count + (action.candidate?.warnings.length ?? 0), 0);
+    this.repository.finishRun(runId, runSummary);
     return plan;
   }
 
   public async apply(plan: SyncPlan): Promise<ApplyResult> {
     const outcomes: ItemOutcome[] = [];
-    const runId = this.repository.startRun("apply", plan.id);
+    const runId = this.repository.startRun("apply", plan.id, this.origin);
     for (const action of plan.actions) {
       let outcome: ItemOutcome;
       try {

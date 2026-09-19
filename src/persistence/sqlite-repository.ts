@@ -2,10 +2,16 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ExternalItem, SyncPlan } from "../core/models.js";
-import type { CachedEnrichment, SyncMapping, SyncRepository } from "../core/ports.js";
-import { sourceKey } from "../core/hash.js";
+import type { CachedEnrichment, PlanRecord, RunDetail, RunSummary, SyncMapping, SyncRepository } from "../core/ports.js";
+import { sha256, sourceKey, stableJson } from "../core/hash.js";
 
 type Row = Record<string, unknown>;
+
+function textColumn(value: unknown, fallback = ""): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") return String(value);
+  return fallback;
+}
 
 export class SqliteSyncRepository implements SyncRepository {
   private readonly db: DatabaseSync;
@@ -45,12 +51,19 @@ export class SqliteSyncRepository implements SyncRepository {
       CREATE TABLE IF NOT EXISTS sync_plans (
         id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL,
-        plan_json TEXT NOT NULL
+        plan_json TEXT NOT NULL,
+        digest TEXT,
+        expires_at TEXT,
+        config_fingerprint TEXT,
+        apply_status TEXT NOT NULL DEFAULT 'planned',
+        applied_at TEXT,
+        origin TEXT NOT NULL DEFAULT 'cli'
       );
       CREATE TABLE IF NOT EXISTS sync_runs (
         id TEXT PRIMARY KEY,
         mode TEXT NOT NULL,
         plan_id TEXT NOT NULL,
+        origin TEXT NOT NULL DEFAULT 'cli',
         started_at TEXT NOT NULL,
         finished_at TEXT,
         summary_json TEXT
@@ -62,7 +75,22 @@ export class SqliteSyncRepository implements SyncRepository {
         outcome TEXT NOT NULL,
         detail TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS idx_sync_runs_started_at ON sync_runs(started_at DESC);
     `);
+    this.ensureColumn("sync_plans", "digest", "TEXT");
+    this.ensureColumn("sync_plans", "expires_at", "TEXT");
+    this.ensureColumn("sync_plans", "config_fingerprint", "TEXT");
+    this.ensureColumn("sync_plans", "apply_status", "TEXT NOT NULL DEFAULT 'planned'");
+    this.ensureColumn("sync_plans", "applied_at", "TEXT");
+    this.ensureColumn("sync_plans", "origin", "TEXT NOT NULL DEFAULT 'cli'");
+    this.ensureColumn("sync_runs", "origin", "TEXT NOT NULL DEFAULT 'cli'");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
+    if (!columns.some((value) => String(value.name) === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   public getEnrichment(cacheKey: string): CachedEnrichment | undefined {
@@ -70,9 +98,9 @@ export class SqliteSyncRepository implements SyncRepository {
       .get(cacheKey) as Row | undefined;
     if (!row) return undefined;
     return {
-      cacheKey: String(row.cache_key),
-      resultJson: String(row.result_json),
-      provenanceJson: String(row.provenance_json),
+      cacheKey: textColumn(row.cache_key),
+      resultJson: textColumn(row.result_json),
+      provenanceJson: textColumn(row.provenance_json),
     };
   }
 
@@ -92,10 +120,10 @@ export class SqliteSyncRepository implements SyncRepository {
     `).get(key) as Row | undefined;
     if (!row) return undefined;
     return {
-      sourceKey: String(row.source_key),
-      todoistTaskId: String(row.todoist_task_id),
-      lastDestinationFingerprint: String(row.last_destination_fingerprint),
-      updatedAt: String(row.updated_at),
+      sourceKey: textColumn(row.source_key),
+      todoistTaskId: textColumn(row.todoist_task_id),
+      lastDestinationFingerprint: textColumn(row.last_destination_fingerprint),
+      updatedAt: textColumn(row.updated_at),
     };
   }
 
@@ -122,20 +150,67 @@ export class SqliteSyncRepository implements SyncRepository {
     );
   }
 
-  public savePlan(plan: SyncPlan): void {
-    this.db.prepare("INSERT OR REPLACE INTO sync_plans(id, created_at, plan_json) VALUES (?, ?, ?)")
-      .run(plan.id, plan.createdAt, JSON.stringify(plan));
+  public savePlan(plan: SyncPlan, metadata: Partial<Omit<PlanRecord, "plan">> = {}): void {
+    const digest = metadata.digest ?? sha256(stableJson(plan));
+    const expiresAt = metadata.expiresAt ?? new Date(new Date(plan.createdAt).getTime() + 15 * 60_000).toISOString();
+    this.db.prepare(`
+      INSERT INTO sync_plans(id, created_at, plan_json, digest, expires_at, config_fingerprint, apply_status, applied_at, origin)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET plan_json=excluded.plan_json, digest=excluded.digest,
+        expires_at=excluded.expires_at, config_fingerprint=excluded.config_fingerprint,
+        apply_status=excluded.apply_status, applied_at=excluded.applied_at, origin=excluded.origin
+    `).run(
+      plan.id,
+      plan.createdAt,
+      JSON.stringify(plan),
+      digest,
+      expiresAt,
+      metadata.configFingerprint ?? "",
+      metadata.applyStatus ?? "planned",
+      metadata.appliedAt ?? null,
+      metadata.origin ?? "cli",
+    );
   }
 
   public loadPlan(planId: string): SyncPlan | undefined {
-    const row = this.db.prepare("SELECT plan_json FROM sync_plans WHERE id = ?").get(planId) as Row | undefined;
-    return row ? JSON.parse(String(row.plan_json)) as SyncPlan : undefined;
+    return this.getPlanRecord(planId)?.plan;
   }
 
-  public startRun(mode: "plan" | "apply", planId: string): string {
+  public getPlanRecord(planId: string): PlanRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT plan_json, digest, expires_at, config_fingerprint, apply_status, applied_at, origin
+      FROM sync_plans WHERE id = ?
+    `).get(planId) as Row | undefined;
+    if (!row) return undefined;
+    const plan = JSON.parse(textColumn(row.plan_json)) as SyncPlan;
+    return {
+      plan,
+      digest: textColumn(row.digest, sha256(stableJson(plan))),
+      expiresAt: textColumn(row.expires_at, new Date(new Date(plan.createdAt).getTime() + 15 * 60_000).toISOString()),
+      configFingerprint: textColumn(row.config_fingerprint),
+      applyStatus: textColumn(row.apply_status, "planned") as PlanRecord["applyStatus"],
+      ...(row.applied_at ? { appliedAt: textColumn(row.applied_at) } : {}),
+      origin: textColumn(row.origin, "cli") as PlanRecord["origin"],
+    };
+  }
+
+  public claimPlanForApply(planId: string, digest: string, now: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE sync_plans SET apply_status = 'applying'
+      WHERE id = ? AND digest = ? AND apply_status = 'planned' AND expires_at > ?
+    `).run(planId, digest, now);
+    return Number(result.changes) === 1;
+  }
+
+  public finishPlanApply(planId: string, status: "applied" | "failed"): void {
+    this.db.prepare("UPDATE sync_plans SET apply_status = ?, applied_at = ? WHERE id = ?")
+      .run(status, new Date().toISOString(), planId);
+  }
+
+  public startRun(mode: "plan" | "apply", planId: string, origin: "cli" | "desktop" = "cli"): string {
     const id = crypto.randomUUID();
-    this.db.prepare("INSERT INTO sync_runs(id, mode, plan_id, started_at) VALUES (?, ?, ?, ?)")
-      .run(id, mode, planId, new Date().toISOString());
+    this.db.prepare("INSERT INTO sync_runs(id, mode, plan_id, origin, started_at) VALUES (?, ?, ?, ?, ?)")
+      .run(id, mode, planId, origin, new Date().toISOString());
     return id;
   }
 
@@ -147,6 +222,46 @@ export class SqliteSyncRepository implements SyncRepository {
   public finishRun(runId: string, summary: Record<string, number>): void {
     this.db.prepare("UPDATE sync_runs SET finished_at = ?, summary_json = ? WHERE id = ?")
       .run(new Date().toISOString(), JSON.stringify(summary), runId);
+  }
+
+  public listRecentRuns(limit = 20): RunSummary[] {
+    const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const rows = this.db.prepare(`
+      SELECT id, mode, plan_id, origin, started_at, finished_at, summary_json
+      FROM sync_runs ORDER BY started_at DESC LIMIT ?
+    `).all(safeLimit) as Row[];
+    return rows.map((row) => this.runSummary(row));
+  }
+
+  public getRun(runId: string): RunDetail | undefined {
+    const row = this.db.prepare(`
+      SELECT id, mode, plan_id, origin, started_at, finished_at, summary_json
+      FROM sync_runs WHERE id = ?
+    `).get(runId) as Row | undefined;
+    if (!row) return undefined;
+    const outcomes = this.db.prepare(`
+      SELECT source_key, outcome, detail FROM sync_outcomes WHERE run_id = ? ORDER BY id
+    `).all(runId) as Row[];
+    return {
+      ...this.runSummary(row),
+      outcomes: outcomes.map((outcome) => ({
+        sourceKey: textColumn(outcome.source_key),
+        outcome: textColumn(outcome.outcome),
+        detail: textColumn(outcome.detail),
+      })),
+    };
+  }
+
+  private runSummary(row: Row): RunSummary {
+    return {
+      id: textColumn(row.id),
+      mode: textColumn(row.mode) as RunSummary["mode"],
+      planId: textColumn(row.plan_id),
+      origin: textColumn(row.origin, "cli") as RunSummary["origin"],
+      startedAt: textColumn(row.started_at),
+      ...(row.finished_at ? { finishedAt: textColumn(row.finished_at) } : {}),
+      summary: row.summary_json ? JSON.parse(textColumn(row.summary_json)) as Record<string, number> : {},
+    };
   }
 
   public close(): void {

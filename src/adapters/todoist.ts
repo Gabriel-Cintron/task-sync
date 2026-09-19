@@ -2,6 +2,7 @@ import { z } from "zod";
 import { classifyHttpFailure } from "../core/errors.js";
 import type { DiagnosticReport, TodoistDestination } from "../core/ports.js";
 import type { TodoistTask, TodoistTaskInput } from "../core/models.js";
+import type { DestinationCatalog, DestinationProject, DestinationSection } from "../application/contracts.js";
 
 const TodoistTaskSchema = z.object({
   id: z.string(),
@@ -19,7 +20,11 @@ const PaginatedTasksSchema = z.object({
 }).passthrough();
 
 const NamedResourcePageSchema = z.object({
-  results: z.array(z.object({ id: z.string(), name: z.string() }).passthrough()),
+  results: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    project_id: z.string().optional(),
+  }).passthrough()),
   next_cursor: z.string().nullish(),
 }).passthrough();
 
@@ -93,12 +98,11 @@ export class TodoistAdapter implements TodoistDestination {
   }
 
   public async diagnose(options: { mutate?: boolean } = {}): Promise<DiagnosticReport> {
-    const projects = await this.countResources("/projects");
-    const sections = await this.countResources("/sections");
+    const catalog = await this.listDestinations();
     const checks: DiagnosticReport["checks"] = [
       { name: "authentication", ok: true, detail: "Todoist token accepted" },
-      { name: "projects", ok: true, detail: `${projects} project(s) visible` },
-      { name: "sections", ok: true, detail: `${sections} section(s) visible` },
+      { name: "projects", ok: true, detail: `${catalog.projects.length} project(s) visible` },
+      { name: "sections", ok: true, detail: `${catalog.sections.length} section(s) visible` },
     ];
     if (options.mutate) {
       const suffix = new Date().toISOString();
@@ -109,6 +113,16 @@ export class TodoistAdapter implements TodoistDestination {
       checks.push({ name: "write lifecycle", ok: Boolean(retrieved), detail: "Created, retrieved, updated, and deleted a labeled test task" });
     }
     return { provider: "Todoist", ok: true, checks };
+  }
+
+  public async listDestinations(): Promise<DestinationCatalog> {
+    const projectRows = await this.listResources("/projects");
+    const sectionRows = await this.listResources("/sections");
+    const projects: DestinationProject[] = projectRows.map((value) => ({ id: value.id, name: value.name }));
+    const sections: DestinationSection[] = sectionRows
+      .filter((value): value is typeof value & { project_id: string } => Boolean(value.project_id))
+      .map((value) => ({ id: value.id, name: value.name, projectId: value.project_id }));
+    return { projects, sections };
   }
 
   private payload(input: TodoistTaskInput, includeDestination: boolean): Record<string, unknown> {
@@ -122,18 +136,18 @@ export class TodoistAdapter implements TodoistDestination {
     };
   }
 
-  private async countResources(path: string): Promise<number> {
-    let count = 0;
+  private async listResources(path: string): Promise<Array<z.infer<typeof NamedResourcePageSchema>["results"][number]>> {
+    const results: Array<z.infer<typeof NamedResourcePageSchema>["results"][number]> = [];
     let cursor: string | undefined;
     do {
       const query = new URLSearchParams({ limit: "200" });
       if (cursor) query.set("cursor", cursor);
       const response = await this.request(`${path}?${query.toString()}`, { method: "GET" });
       const page = NamedResourcePageSchema.parse(await response!.json());
-      count += page.results.length;
+      results.push(...page.results);
       cursor = page.next_cursor ?? undefined;
     } while (cursor);
-    return count;
+    return results;
   }
 
   private async request(path: string, init: RequestInit, allowNotFound = false): Promise<Response | undefined> {
