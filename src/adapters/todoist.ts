@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { classifyHttpFailure } from "../core/errors.js";
+import { DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "../core/fetch-with-timeout.js";
 import type { DiagnosticReport, TodoistDestination } from "../core/ports.js";
 import type { TodoistTask, TodoistTaskInput } from "../core/models.js";
 import type { DestinationCatalog, DestinationProject, DestinationSection } from "../application/contracts.js";
@@ -45,6 +46,7 @@ export class TodoistAdapter implements TodoistDestination {
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly baseUrl = "https://api.todoist.com/api/v1",
+    private readonly requestTimeoutMs = DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS,
   ) {}
 
   public async getTask(id: string): Promise<TodoistTask | undefined> {
@@ -151,14 +153,20 @@ export class TodoistAdapter implements TodoistDestination {
   }
 
   private async request(path: string, init: RequestInit, allowNotFound = false): Promise<Response | undefined> {
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-        ...init.headers,
+    const response = await fetchWithTimeout(
+      "Todoist",
+      this.fetchImpl,
+      `${this.baseUrl}${path}`,
+      {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+          ...init.headers,
+        },
       },
-    });
+      this.requestTimeoutMs,
+    );
     if (allowNotFound && response.status === 404) return undefined;
     if (!response.ok) throw classifyHttpFailure("Todoist", response.status, await response.text());
     return response;

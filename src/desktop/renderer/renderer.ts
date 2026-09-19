@@ -14,9 +14,10 @@ const state: {
   plan?: PlanView;
   planFilter: "all" | SyncActionKind;
   courses: CourseSummary[];
+  coursesLoaded: boolean;
   destinations?: DestinationCatalog;
   importRequest: ImportRequest;
-} = { route: "dashboard", setupStep: 0, planFilter: "all", courses: [], importRequest: {} };
+} = { route: "dashboard", setupStep: 0, planFilter: "all", courses: [], coursesLoaded: false, importRequest: {} };
 
 const providerNames: Record<Provider, string> = {
   todoist: "Todoist",
@@ -202,10 +203,21 @@ function renderOpenAISetup(): void {
 
 async function renderMappingSetup(): Promise<void> {
   setupFrame("Map your courses", "Choose where each Canvas course should land. Leaving a course in Inbox is completely fine.", `<div class="loading-panel"><div class="spinner"></div><p>Discovering courses and destinations…</p></div>`);
-  if (!state.courses.length) {
-    const data = await runBusy(null, async () => Promise.all([window.taskSync.discoverCanvasCourses(), window.taskSync.listTodoistDestinations()]));
-    if (!data) return;
-    [state.courses, state.destinations] = data;
+  let discoveryStage = "Canvas courses";
+  try {
+    if (!state.coursesLoaded) {
+      updateDiscoveryStatus("Discovering Canvas courses…");
+      state.courses = await window.taskSync.discoverCanvasCourses();
+      state.coursesLoaded = true;
+    }
+    if (!state.destinations) {
+      discoveryStage = "Todoist destinations";
+      updateDiscoveryStatus("Discovering Todoist projects and sections…");
+      state.destinations = await window.taskSync.listTodoistDestinations();
+    }
+  } catch (error) {
+    renderDiscoveryError(discoveryStage, errorMessage(error));
+    return;
   }
   const projects = state.destinations?.projects ?? [];
   const sections = state.destinations?.sections ?? [];
@@ -238,6 +250,19 @@ async function renderMappingSetup(): Promise<void> {
     const saved = await runBusy(event.currentTarget as HTMLButtonElement, () => window.taskSync.saveSetup({ config }));
     if (!saved) return; state.bootstrap = { ...state.bootstrap!, ...saved }; state.setupStep = 4; renderSetup();
   });
+}
+
+function updateDiscoveryStatus(message: string): void {
+  const status = main.querySelector<HTMLElement>(".loading-panel p");
+  if (status) status.textContent = message;
+}
+
+function renderDiscoveryError(stage: string, message: string): void {
+  const card = main.querySelector<HTMLElement>(".card");
+  if (!card) return;
+  card.innerHTML = `<div class="empty"><div class="empty-icon">!</div><h2>Could not discover ${escapeHtml(stage)}</h2><p class="muted">${escapeHtml(message)}</p></div><div class="button-row"><button class="button secondary" id="back">Back</button><button class="button primary" id="retry-discovery">Try again</button></div>`;
+  card.querySelector("#back")?.addEventListener("click", () => { state.setupStep = 2; renderSetup(); });
+  card.querySelector("#retry-discovery")?.addEventListener("click", () => { void renderMappingSetup(); });
 }
 
 function renderReviewSetup(): void {
@@ -340,7 +365,7 @@ function renderSettings(): void {
     <div class="card"><h2>Desktop data</h2><div class="muted">Configuration: ${escapeHtml(bootstrap.paths.config)}<br>Database: ${escapeHtml(bootstrap.paths.database)}<br>Secrets: ${escapeHtml(bootstrap.paths.secrets)}</div></div>
   </section>`;
   main.querySelectorAll<HTMLButtonElement>("[data-edit-provider]").forEach((button) => button.addEventListener("click", () => { const provider = button.dataset.editProvider; state.setupStep = provider === "todoist" ? 0 : provider === "canvas" ? 1 : 2; route("setup"); }));
-  main.querySelector("#remap-courses")?.addEventListener("click", () => { state.courses = []; delete state.destinations; state.setupStep = 3; route("setup"); });
+  main.querySelector("#remap-courses")?.addEventListener("click", () => { state.courses = []; state.coursesLoaded = false; delete state.destinations; state.setupStep = 3; route("setup"); });
   main.querySelectorAll<HTMLButtonElement>("[data-remove-provider]").forEach((button) => button.addEventListener("click", async () => {
     const provider = button.dataset.removeProvider as Provider;
     if (!window.confirm(`Remove the saved ${providerNames[provider]} credential?`)) return;

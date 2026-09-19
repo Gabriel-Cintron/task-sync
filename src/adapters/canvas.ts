@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { classifyHttpFailure, ProviderError } from "../core/errors.js";
+import { DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "../core/fetch-with-timeout.js";
 import { externalItemFingerprint } from "../core/hash.js";
 import { ExternalItemSchema, type ExternalItem } from "../core/models.js";
 import type { DiagnosticReport, SourceAdapter } from "../core/ports.js";
@@ -72,6 +73,7 @@ export class CanvasAdapter implements SourceAdapter {
     private readonly baseUrl: string,
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly requestTimeoutMs = DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS,
   ) {
     if (!baseUrl.startsWith("https://")) throw new ProviderError("configuration", "CANVAS_BASE_URL must use HTTPS");
   }
@@ -134,7 +136,13 @@ export class CanvasAdapter implements SourceAdapter {
   }
 
   private async request(url: string): Promise<Response> {
-    const response = await this.fetchImpl(url, { headers: { Authorization: `Bearer ${this.token}` } });
+    const response = await fetchWithTimeout(
+      "Canvas",
+      this.fetchImpl,
+      url,
+      { headers: { Authorization: `Bearer ${this.token}` } },
+      this.requestTimeoutMs,
+    );
     if (!response.ok) throw classifyHttpFailure("Canvas", response.status, await response.text());
     return response;
   }
