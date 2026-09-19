@@ -2,6 +2,8 @@
 
 A personal-use TypeScript CLI that reads real assignments from Canvas and Google Classroom, optionally uses OpenAI to clean and classify them, and plans safe Todoist creates or updates. External writes are deterministic and opt-in.
 
+For installation, credential setup, first-run instructions, output interpretation, and troubleshooting, see the [complete usage guide](docs/USAGE.md).
+
 ## What is implemented
 
 - Canvas active-course and assignment reads, including current-user submission state and opaque `Link` pagination.
