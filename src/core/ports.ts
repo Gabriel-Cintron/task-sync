@@ -9,18 +9,18 @@ import type {
 export interface SourceAdapter {
   readonly sourceType: string;
   readonly connectionId: string;
-  listItems(): Promise<ExternalItem[]>;
+  listItems(options?: { signal?: AbortSignal }): Promise<ExternalItem[]>;
   diagnose(): Promise<DiagnosticReport>;
 }
 
 export interface EnrichmentService {
-  enrich(item: ExternalItem, options?: { force?: boolean }): Promise<EnrichmentResult>;
+  enrich(item: ExternalItem, options?: { force?: boolean; signal?: AbortSignal }): Promise<EnrichmentResult>;
 }
 
 export interface TodoistDestination {
   diagnose(options?: { mutate?: boolean }): Promise<DiagnosticReport>;
-  getTask(id: string): Promise<TodoistTask | undefined>;
-  findByStableMarker(marker: string): Promise<TodoistTask[]>;
+  getTask(id: string, options?: { signal?: AbortSignal }): Promise<TodoistTask | undefined>;
+  findByStableMarker(marker: string, options?: { signal?: AbortSignal }): Promise<TodoistTask[]>;
   createTask(input: TodoistTaskInput, requestId: string): Promise<TodoistTask>;
   updateTask(id: string, input: TodoistTaskInput, requestId: string): Promise<TodoistTask>;
 }

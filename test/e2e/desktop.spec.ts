@@ -87,3 +87,21 @@ test("imports CLI settings by copy and keeps Classroom optional", async () => {
     await app.close();
   }
 });
+
+test("a running preview can be cancelled without leaving the operation lock behind", async () => {
+  const { app, page } = await launch();
+  try {
+    await completeSetup(page);
+    await page.getByTestId("first-preview").click();
+    await expect(page.getByTestId("cancel-preview")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back" })).toBeDisabled();
+    await page.getByTestId("cancel-preview").click();
+    await expect(page.getByText("Preview cancelled.")).toBeVisible();
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect(page.getByRole("heading", { name: "Map your courses" })).toBeVisible();
+    await page.getByTestId("mapping-continue").click();
+    await expect(page.getByRole("heading", { name: "Ready for your first preview" })).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});

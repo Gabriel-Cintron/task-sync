@@ -28,7 +28,16 @@ class SmokeCanvas implements SourceAdapter {
     await new Promise((resolve) => setTimeout(resolve, 50));
     return [{ externalId: "course-biology", name: "Biology" }];
   }
-  public listItems(): Promise<ExternalItem[]> { return Promise.resolve([item("safe-create", "Cell lab"), item("duplicate-conflict", "Research notes"), item("enrichment-error", "Broken row")]); }
+  public async listItems(options: { signal?: AbortSignal } = {}): Promise<ExternalItem[]> {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(resolve, 500);
+      options.signal?.addEventListener("abort", () => {
+        clearTimeout(timeout);
+        reject(options.signal?.reason instanceof Error ? options.signal.reason : new Error("Operation cancelled"));
+      }, { once: true });
+    });
+    return [item("safe-create", "Cell lab"), item("duplicate-conflict", "Research notes"), item("enrichment-error", "Broken row")];
+  }
   public diagnose(): Promise<DiagnosticReport> { return report("Canvas"); }
 }
 

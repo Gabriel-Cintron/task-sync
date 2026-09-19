@@ -127,13 +127,14 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     chmodSync(this.tokenFile, 0o600);
   }
 
-  public async listItems(): Promise<ExternalItem[]> {
+  public async listItems(options: { signal?: AbortSignal } = {}): Promise<ExternalItem[]> {
     const classroom = google.classroom({ version: "v1", auth: this.authenticatedClient() });
-    const courses = await this.listCourses(classroom);
+    const courses = await this.listCourses(classroom, options.signal);
     const result: ExternalItem[] = [];
     for (const course of courses) {
-      const courseWork = await this.listCourseWork(classroom, course.id);
-      const submissions = await this.listSubmissions(classroom, course.id);
+      options.signal?.throwIfAborted();
+      const courseWork = await this.listCourseWork(classroom, course.id, options.signal);
+      const submissions = await this.listSubmissions(classroom, course.id, options.signal);
       const byCourseWork = new Map(submissions.map((value) => [value.courseWorkId, value]));
       for (const work of courseWork) {
         result.push(normalizeClassroomCourseWork(course, work, byCourseWork.get(work.id), this.connectionId));
@@ -185,10 +186,11 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     return client;
   }
 
-  private async listCourses(classroom: ReturnType<typeof google.classroom>): Promise<Array<z.infer<typeof CourseSchema>>> {
+  private async listCourses(classroom: ReturnType<typeof google.classroom>, signal?: AbortSignal): Promise<Array<z.infer<typeof CourseSchema>>> {
     const all: Array<z.infer<typeof CourseSchema>> = [];
     let pageToken: string | undefined;
     do {
+      signal?.throwIfAborted();
       const response = await classroom.courses.list({ courseStates: ["ACTIVE"], pageSize: 100, ...(pageToken ? { pageToken } : {}) });
       all.push(...z.array(CourseSchema).parse(response.data.courses ?? []));
       pageToken = response.data.nextPageToken ?? undefined;
@@ -196,10 +198,11 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     return all;
   }
 
-  private async listCourseWork(classroom: ReturnType<typeof google.classroom>, courseId: string): Promise<Array<z.infer<typeof CourseWorkSchema>>> {
+  private async listCourseWork(classroom: ReturnType<typeof google.classroom>, courseId: string, signal?: AbortSignal): Promise<Array<z.infer<typeof CourseWorkSchema>>> {
     const all: Array<z.infer<typeof CourseWorkSchema>> = [];
     let pageToken: string | undefined;
     do {
+      signal?.throwIfAborted();
       const response = await classroom.courses.courseWork.list({ courseId, courseWorkStates: ["PUBLISHED"], pageSize: 100, ...(pageToken ? { pageToken } : {}) });
       all.push(...z.array(CourseWorkSchema).parse(response.data.courseWork ?? []));
       pageToken = response.data.nextPageToken ?? undefined;
@@ -207,10 +210,11 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     return all;
   }
 
-  private async listSubmissions(classroom: ReturnType<typeof google.classroom>, courseId: string): Promise<Array<z.infer<typeof SubmissionSchema>>> {
+  private async listSubmissions(classroom: ReturnType<typeof google.classroom>, courseId: string, signal?: AbortSignal): Promise<Array<z.infer<typeof SubmissionSchema>>> {
     const all: Array<z.infer<typeof SubmissionSchema>> = [];
     let pageToken: string | undefined;
     do {
+      signal?.throwIfAborted();
       const response = await classroom.courses.courseWork.studentSubmissions.list({
         courseId,
         courseWorkId: "-",

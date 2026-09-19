@@ -4,7 +4,7 @@ import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { TaskSyncApplication } from "../application/task-sync-application.js";
-import { ApplyPlanRequestSchema, ApplyResultSchema, BootstrapStateSchema, CourseSummarySchema, DestinationCatalogSchema, DiagnosticOptionsSchema, DiagnosticReportSchema, ImportRequestSchema, ImportResultSchema, PlanRequestSchema, PlanViewSchema, ProviderSchema, RunDetailSchema, RunSummarySchema, SetupInputSchema, SetupStatusSchema } from "../application/contracts.js";
+import { ApplyPlanRequestSchema, ApplyResultSchema, BootstrapStateSchema, CourseSummarySchema, DestinationCatalogSchema, DiagnosticOptionsSchema, DiagnosticReportSchema, ImportRequestSchema, ImportResultSchema, OperationCancellationSchema, PlanRequestSchema, PlanViewSchema, ProviderSchema, RunDetailSchema, RunSummarySchema, SetupInputSchema, SetupStatusSchema } from "../application/contracts.js";
 import { desktopPaths, SettingsStore } from "../application/settings-store.js";
 import { safeErrorMessage } from "../core/errors.js";
 import { IPC, type FileKind } from "./bridge.js";
@@ -49,6 +49,7 @@ async function validated<T>(schema: z.ZodType<T>, value: T | Promise<T>): Promis
 
 function registerIpcHandlers(): void {
   handle(IPC.bootstrap, () => validated(BootstrapStateSchema, application.getBootstrapState()));
+  handle(IPC.cancelOperation, () => validated(OperationCancellationSchema, application.cancelActiveOperation()));
   handle(IPC.importSetup, (_event, input) => validated(ImportResultSchema, application.importExistingSetup(ImportRequestSchema.parse(input))));
   handle(IPC.saveSetup, (_event, input) => validated(SetupStatusSchema, application.saveSetup(SetupInputSchema.parse(input))));
   handle(IPC.removeCredential, (_event, input) => validated(SetupStatusSchema, application.removeCredential(ProviderSchema.parse(input))));

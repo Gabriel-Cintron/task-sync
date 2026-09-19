@@ -42,6 +42,8 @@ function normalize(raw: z.infer<typeof TodoistTaskSchema>): TodoistTask {
 }
 
 export class TodoistAdapter implements TodoistDestination {
+  private taskCatalog: Promise<TodoistTask[]> | undefined;
+
   public constructor(
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
@@ -49,24 +51,36 @@ export class TodoistAdapter implements TodoistDestination {
     private readonly requestTimeoutMs = DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS,
   ) {}
 
-  public async getTask(id: string): Promise<TodoistTask | undefined> {
-    const response = await this.request(`/tasks/${encodeURIComponent(id)}`, { method: "GET" }, true);
+  public async getTask(id: string, options: { signal?: AbortSignal } = {}): Promise<TodoistTask | undefined> {
+    const response = await this.request(`/tasks/${encodeURIComponent(id)}`, { method: "GET", ...options }, true);
     if (!response) return undefined;
     return normalize(TodoistTaskSchema.parse(await response.json()));
   }
 
-  public async findByStableMarker(marker: string): Promise<TodoistTask[]> {
-    const matches: TodoistTask[] = [];
+  public async findByStableMarker(marker: string, options: { signal?: AbortSignal } = {}): Promise<TodoistTask[]> {
+    options.signal?.throwIfAborted();
+    if (!this.taskCatalog) {
+      this.taskCatalog = this.listAllTasks(options).catch((error: unknown) => {
+        this.taskCatalog = undefined;
+        throw error;
+      });
+    }
+    return (await this.taskCatalog).filter((task) => task.description.includes(marker));
+  }
+
+  private async listAllTasks(options: { signal?: AbortSignal }): Promise<TodoistTask[]> {
+    const tasks: TodoistTask[] = [];
     let cursor: string | undefined;
     do {
+      options.signal?.throwIfAborted();
       const query = new URLSearchParams({ limit: "200" });
       if (cursor) query.set("cursor", cursor);
-      const response = await this.request(`/tasks?${query.toString()}`, { method: "GET" });
+      const response = await this.request(`/tasks?${query.toString()}`, { method: "GET", ...options });
       const page = PaginatedTasksSchema.parse(await response!.json());
-      matches.push(...page.results.filter((task) => task.description.includes(marker)).map(normalize));
+      tasks.push(...page.results.map(normalize));
       cursor = page.next_cursor ?? undefined;
     } while (cursor);
-    return matches;
+    return tasks;
   }
 
   public async createTask(input: TodoistTaskInput, requestId: string): Promise<TodoistTask> {
@@ -117,9 +131,9 @@ export class TodoistAdapter implements TodoistDestination {
     return { provider: "Todoist", ok: true, checks };
   }
 
-  public async listDestinations(): Promise<DestinationCatalog> {
-    const projectRows = await this.listResources("/projects");
-    const sectionRows = await this.listResources("/sections");
+  public async listDestinations(options: { signal?: AbortSignal } = {}): Promise<DestinationCatalog> {
+    const projectRows = await this.listResources("/projects", options);
+    const sectionRows = await this.listResources("/sections", options);
     const projects: DestinationProject[] = projectRows.map((value) => ({ id: value.id, name: value.name }));
     const sections: DestinationSection[] = sectionRows
       .filter((value): value is typeof value & { project_id: string } => Boolean(value.project_id))
@@ -138,13 +152,14 @@ export class TodoistAdapter implements TodoistDestination {
     };
   }
 
-  private async listResources(path: string): Promise<Array<z.infer<typeof NamedResourcePageSchema>["results"][number]>> {
+  private async listResources(path: string, options: { signal?: AbortSignal } = {}): Promise<Array<z.infer<typeof NamedResourcePageSchema>["results"][number]>> {
     const results: Array<z.infer<typeof NamedResourcePageSchema>["results"][number]> = [];
     let cursor: string | undefined;
     do {
+      options.signal?.throwIfAborted();
       const query = new URLSearchParams({ limit: "200" });
       if (cursor) query.set("cursor", cursor);
-      const response = await this.request(`${path}?${query.toString()}`, { method: "GET" });
+      const response = await this.request(`${path}?${query.toString()}`, { method: "GET", ...options });
       const page = NamedResourcePageSchema.parse(await response!.json());
       results.push(...page.results);
       cursor = page.next_cursor ?? undefined;

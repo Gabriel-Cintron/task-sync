@@ -31,15 +31,17 @@ export class SyncEngine {
     private readonly origin: "cli" | "desktop" = "cli",
   ) {}
 
-  public async plan(sources: SourceAdapter[], options: { forceReenrich?: boolean } = {}): Promise<SyncPlan> {
+  public async plan(sources: SourceAdapter[], options: { forceReenrich?: boolean; signal?: AbortSignal } = {}): Promise<SyncPlan> {
     const actions: SyncAction[] = [];
     const enrichmentCounts = { cached: 0, processed: 0, fallback: 0, disabled: 0 };
 
     for (const source of sources) {
+      options.signal?.throwIfAborted();
       let items;
       try {
-        items = await source.listItems();
+        items = await source.listItems(options.signal ? { signal: options.signal } : {});
       } catch (error) {
+        options.signal?.throwIfAborted();
         actions.push({
           kind: "error",
           sourceKey: `${source.sourceType}:${source.connectionId}:*`,
@@ -49,6 +51,7 @@ export class SyncEngine {
       }
 
       for (const item of items) {
+        options.signal?.throwIfAborted();
         const key = sourceKey(item.ref);
         this.repository.recordSource(item);
         if ((item.status === "submitted" || item.status === "completed") && this.config.sync.completedSourceItems === "skip") {
@@ -57,7 +60,7 @@ export class SyncEngine {
         }
 
         try {
-          const enriched = await this.enrichment.enrich(item, { force: options.forceReenrich ?? false });
+          const enriched = await this.enrichment.enrich(item, { force: options.forceReenrich ?? false, ...(options.signal ? { signal: options.signal } : {}) });
           enrichmentCounts[enriched.provenance.status] += 1;
           if (!enriched.enrichment.isActionable) {
             actions.push({ kind: "skip", sourceKey: key, reason: "Enrichment classified item as non-actionable" });
@@ -67,7 +70,7 @@ export class SyncEngine {
           const fingerprint = destinationFingerprint(candidate);
           const mapping = this.repository.getMapping(key);
           if (mapping) {
-            const task = await this.todoist.getTask(mapping.todoistTaskId);
+            const task = await this.todoist.getTask(mapping.todoistTaskId, options.signal ? { signal: options.signal } : {});
             if (!task) {
               actions.push({ kind: "conflict", sourceKey: key, candidate, reason: "Mapped Todoist task is missing; refusing to create a possible duplicate", destinationFingerprint: fingerprint });
               continue;
@@ -83,7 +86,7 @@ export class SyncEngine {
             continue;
           }
 
-          const recovered = await this.todoist.findByStableMarker(stableMarker(item));
+          const recovered = await this.todoist.findByStableMarker(stableMarker(item), options.signal ? { signal: options.signal } : {});
           if (recovered.length > 1) {
             actions.push({ kind: "conflict", sourceKey: key, candidate, reason: `${recovered.length} Todoist tasks contain the stable marker`, destinationFingerprint: fingerprint });
           } else if (recovered[0]) {
@@ -92,10 +95,13 @@ export class SyncEngine {
             actions.push({ kind: "create", sourceKey: key, candidate, reason: "No existing mapping or stable marker found", destinationFingerprint: fingerprint });
           }
         } catch (error) {
+          options.signal?.throwIfAborted();
           actions.push({ kind: "error", sourceKey: key, reason: error instanceof Error ? error.message : "Unknown planning failure" });
         }
       }
     }
+
+    options.signal?.throwIfAborted();
 
     const plan: SyncPlan = {
       id: randomUUID(),

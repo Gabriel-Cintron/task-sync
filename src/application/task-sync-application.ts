@@ -22,6 +22,7 @@ import {
   type DiagnosticOptions,
   type ImportRequest,
   type ImportResult,
+  type OperationCancellation,
   type PlanRequest,
   type PlanView,
   type Provider,
@@ -33,8 +34,8 @@ import {
 import { OperationMutex } from "./mutex.js";
 import type { SettingsStore } from "./settings-store.js";
 
-type DiscoverableCanvas = SourceAdapter & { listCourses(): Promise<CourseSummary[]> };
-type DiscoverableTodoist = TodoistDestination & { listDestinations(): Promise<DestinationCatalog> };
+type DiscoverableCanvas = SourceAdapter & { listCourses(options?: { signal?: AbortSignal }): Promise<CourseSummary[]> };
+type DiscoverableTodoist = TodoistDestination & { listDestinations(options?: { signal?: AbortSignal }): Promise<DestinationCatalog> };
 type AuthorizableClassroom = SourceAdapter & { authorize(options?: { onAuthorizationUrl?: (url: string) => void }): Promise<void> };
 
 export type ApplicationFactories = {
@@ -93,6 +94,10 @@ export class TaskSyncApplication {
     });
   }
 
+  public cancelActiveOperation(): Promise<OperationCancellation> {
+    return Promise.resolve(this.mutex.cancel());
+  }
+
   public async saveSetup(input: SetupInput): Promise<SetupStatus> {
     return this.mutex.run("save setup", () => this.settings.save(SetupInputSchema.parse(input)));
   }
@@ -134,15 +139,15 @@ export class TaskSyncApplication {
   }
 
   public async discoverCanvasCourses(): Promise<CourseSummary[]> {
-    return this.mutex.run("discover Canvas courses", async () => {
-      const courses = await this.factories.canvas(this.settings.config(), this.settings.environment()).listCourses();
+    return this.mutex.run("discover Canvas courses", async (signal) => {
+      const courses = await this.factories.canvas(this.settings.config(), this.settings.environment()).listCourses({ signal });
       return courses.sort((left, right) => left.name.localeCompare(right.name));
     });
   }
 
   public async listTodoistDestinations(): Promise<DestinationCatalog> {
-    return this.mutex.run("list Todoist destinations", async () => {
-      const catalog = await this.factories.todoist(this.settings.environment()).listDestinations();
+    return this.mutex.run("list Todoist destinations", async (signal) => {
+      const catalog = await this.factories.todoist(this.settings.environment()).listDestinations({ signal });
       return {
         projects: catalog.projects.sort((left, right) => left.name.localeCompare(right.name)),
         sections: catalog.sections.sort((left, right) => left.name.localeCompare(right.name)),
@@ -152,7 +157,7 @@ export class TaskSyncApplication {
 
   public async createPlan(input: PlanRequest): Promise<PlanView> {
     const parsed = PlanRequestSchema.parse(input);
-    return this.mutex.run("create sync plan", async () => {
+    return this.mutex.run("create sync plan", async (signal) => {
       const config = this.settings.config();
       const environment = this.settings.environment();
       return this.withRepository(async (repository) => {
@@ -163,7 +168,7 @@ export class TaskSyncApplication {
           config,
           this.origin,
         );
-        const plan = await engine.plan(this.factories.sources(config, parsed.source, environment), { forceReenrich: parsed.forceReenrich });
+        const plan = await engine.plan(this.factories.sources(config, parsed.source, environment), { forceReenrich: parsed.forceReenrich, signal });
         const digest = sha256(stableJson(plan));
         const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
         repository.savePlan(plan, {
@@ -182,7 +187,7 @@ export class TaskSyncApplication {
           canApply: (actionCounts.create ?? 0) + (actionCounts.update ?? 0) > 0,
         };
       });
-    });
+    }, { cancellable: true, timeoutMs: 2 * 60_000 });
   }
 
   public async applyPlan(input: ApplyPlanRequest): Promise<ApplyResult> {

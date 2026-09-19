@@ -78,14 +78,15 @@ export class CanvasAdapter implements SourceAdapter {
     if (!baseUrl.startsWith("https://")) throw new ProviderError("configuration", "CANVAS_BASE_URL must use HTTPS");
   }
 
-  public async listItems(): Promise<ExternalItem[]> {
-    const courses = await this.listCourses();
+  public async listItems(options: { signal?: AbortSignal } = {}): Promise<ExternalItem[]> {
+    const courses = await this.listCourses(options);
     const items: ExternalItem[] = [];
     for (const course of courses) {
       const courseId = course.externalId;
       const assignments = await this.getAll(
         `/api/v1/courses/${encodeURIComponent(courseId)}/assignments?include[]=submission&per_page=100`,
         CanvasAssignmentSchema,
+        options.signal,
       );
       for (const raw of assignments) {
         items.push(normalizeCanvasAssignment({ id: course.externalId, name: course.name }, raw, this.connectionId));
@@ -94,8 +95,8 @@ export class CanvasAdapter implements SourceAdapter {
     return items;
   }
 
-  public async listCourses(): Promise<Array<{ externalId: string; name: string }>> {
-    const courses = await this.getAll("/api/v1/courses?enrollment_state=active&state[]=available&per_page=100", CanvasCourseSchema);
+  public async listCourses(options: { signal?: AbortSignal } = {}): Promise<Array<{ externalId: string; name: string }>> {
+    const courses = await this.getAll("/api/v1/courses?enrollment_state=active&state[]=available&per_page=100", CanvasCourseSchema, options.signal);
     return courses.map((course) => ({ externalId: String(course.id), name: course.name }));
   }
 
@@ -120,11 +121,11 @@ export class CanvasAdapter implements SourceAdapter {
     };
   }
 
-  private async getAll<T>(path: string, schema: z.ZodType<T>): Promise<T[]> {
+  private async getAll<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T[]> {
     const results: T[] = [];
     let url: string | undefined = new URL(path, this.baseUrl).toString();
     while (url) {
-      const response = await this.request(url);
+      const response = await this.request(url, signal);
       results.push(...z.array(schema).parse(await response.json()));
       url = nextLink(response.headers.get("link"));
     }
@@ -135,12 +136,12 @@ export class CanvasAdapter implements SourceAdapter {
     return (await this.request(url)).json() as Promise<unknown>;
   }
 
-  private async request(url: string): Promise<Response> {
+  private async request(url: string, signal?: AbortSignal): Promise<Response> {
     const response = await fetchWithTimeout(
       "Canvas",
       this.fetchImpl,
       url,
-      { headers: { Authorization: `Bearer ${this.token}` } },
+      { headers: { Authorization: `Bearer ${this.token}` }, ...(signal ? { signal } : {}) },
       this.requestTimeoutMs,
     );
     if (!response.ok) throw classifyHttpFailure("Canvas", response.status, await response.text());

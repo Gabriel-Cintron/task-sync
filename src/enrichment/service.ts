@@ -17,7 +17,7 @@ export interface EnrichmentGenerator {
     allowedLabels: string[];
     allowedProjectKeys: string[];
     maxDescriptionCharacters: number;
-  }): Promise<TaskEnrichment>;
+  }, options?: { signal?: AbortSignal }): Promise<TaskEnrichment>;
 }
 
 function fallback(item: ExternalItem, warning?: string): TaskEnrichment {
@@ -42,7 +42,8 @@ export class CachedEnrichmentService implements EnrichmentService {
     private readonly config: AppConfig,
   ) {}
 
-  public async enrich(item: ExternalItem, options: { force?: boolean } = {}): Promise<EnrichmentResult> {
+  public async enrich(item: ExternalItem, options: { force?: boolean; signal?: AbortSignal } = {}): Promise<EnrichmentResult> {
+    options.signal?.throwIfAborted();
     const inputFingerprint = enrichmentInputFingerprint(item);
     const cacheKey = sha256([
       inputFingerprint,
@@ -74,7 +75,8 @@ export class CachedEnrichmentService implements EnrichmentService {
         allowedLabels: this.config.enrichment.allowedLabels,
         allowedProjectKeys: Object.keys(this.config.destinations),
         maxDescriptionCharacters: this.config.enrichment.maxDescriptionCharacters,
-      }));
+      }, options.signal ? { signal: options.signal } : {}));
+      options.signal?.throwIfAborted();
       const enrichment: TaskEnrichment = {
         ...generated,
         cleanedTitle: generated.cleanedTitle.trim() || item.title.trim(),
@@ -91,6 +93,7 @@ export class CachedEnrichmentService implements EnrichmentService {
       });
       return result;
     } catch (error) {
+      options.signal?.throwIfAborted();
       if (this.config.enrichment.mode === "required") throw error;
       const message = error instanceof Error ? error.message : "unknown enrichment failure";
       return this.wrap(fallback(item, `OpenAI enrichment failed; fallback used: ${message}`), inputFingerprint, "fallback");

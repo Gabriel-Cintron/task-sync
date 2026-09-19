@@ -108,6 +108,12 @@ export const ApplyResultSchema = z.object({
 export const DiagnosticReportSchema = z.object({ provider: z.string(), ok: z.boolean(), checks: z.array(z.object({ name: z.string(), ok: z.boolean(), detail: z.string() }).strict()) }).strict();
 export const BootstrapStateSchema = SetupStatusSchema.extend({ setupComplete: z.boolean(), busy: z.boolean(), lastRun: RunSummarySchema.optional() }).strict();
 
+export const OperationCancellationSchema = z.object({
+  accepted: z.boolean(),
+  operation: z.string().optional(),
+}).strict();
+export type OperationCancellation = z.infer<typeof OperationCancellationSchema>;
+
 export const ApplyPlanRequestSchema = z.object({
   planId: z.string().uuid(),
   digest: z.string().regex(/^[a-f0-9]{64}$/),

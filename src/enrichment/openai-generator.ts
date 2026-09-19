@@ -14,7 +14,7 @@ export class OpenAIEnrichmentGenerator implements EnrichmentGenerator {
     allowedLabels: string[];
     allowedProjectKeys: string[];
     maxDescriptionCharacters: number;
-  }): Promise<TaskEnrichment> {
+  }, options: { signal?: AbortSignal } = {}): Promise<TaskEnrichment> {
     const description = item.description?.slice(0, context.maxDescriptionCharacters) ?? null;
     const response = await this.client.responses.parse({
       model: this.model,
@@ -36,7 +36,7 @@ export class OpenAIEnrichmentGenerator implements EnrichmentGenerator {
         allowedProjectKeys: context.allowedProjectKeys,
       }),
       text: { format: zodTextFormat(OpenAIEnrichmentSchema, "task_enrichment") },
-    });
+    }, { signal: options.signal });
     const parsed = response.output_parsed;
     if (!parsed) throw new Error("OpenAI returned no parsed enrichment (possible refusal or incomplete response)");
     return {

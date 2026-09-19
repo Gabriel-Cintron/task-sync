@@ -20,9 +20,10 @@ export async function fetchWithTimeout(
     timedOut = true;
     controller.abort();
   }, timeoutMs);
+  const signal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
 
   try {
-    return await fetchImpl(input, { ...init, signal: controller.signal });
+    return await fetchImpl(input, { ...init, signal });
   } catch (error) {
     if (timedOut) {
       throw new ProviderError(
@@ -30,6 +31,7 @@ export async function fetchWithTimeout(
         `${provider} request timed out after ${durationLabel(timeoutMs)}. Check your connection and try again.`,
       );
     }
+    if (init.signal?.aborted) throw init.signal.reason;
     throw error;
   } finally {
     clearTimeout(timeout);

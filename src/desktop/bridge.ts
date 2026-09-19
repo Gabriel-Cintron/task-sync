@@ -8,6 +8,7 @@ import type {
   DiagnosticOptions,
   ImportRequest,
   ImportResult,
+  OperationCancellation,
   PlanRequest,
   PlanView,
   Provider,
@@ -19,6 +20,7 @@ import type {
 
 export const IPC = {
   bootstrap: "task-sync:bootstrap",
+  cancelOperation: "task-sync:cancel-operation",
   importSetup: "task-sync:import-setup",
   saveSetup: "task-sync:save-setup",
   removeCredential: "task-sync:remove-credential",
@@ -38,6 +40,7 @@ export type FileKind = "env" | "config" | "database" | "google-client" | "google
 
 export type TaskSyncDesktopApi = {
   getBootstrapState(): Promise<BootstrapState>;
+  cancelActiveOperation(): Promise<OperationCancellation>;
   importExistingSetup(input: ImportRequest): Promise<ImportResult>;
   saveSetup(input: SetupInput): Promise<SetupStatus>;
   removeCredential(provider: Provider): Promise<SetupStatus>;

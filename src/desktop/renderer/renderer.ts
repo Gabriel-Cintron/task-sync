@@ -17,6 +17,7 @@ const state: {
   coursesLoaded: boolean;
   destinations?: DestinationCatalog;
   importRequest: ImportRequest;
+  uiOperation?: string;
 } = { route: "dashboard", setupStep: 0, planFilter: "all", courses: [], coursesLoaded: false, importRequest: {} };
 
 const providerNames: Record<Provider, string> = {
@@ -47,12 +48,48 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function runBusy<T>(button: HTMLButtonElement | null, work: () => Promise<T>): Promise<T | undefined> {
+async function runBusy<T>(
+  button: HTMLButtonElement | null,
+  work: () => Promise<T>,
+  options: { name?: string; cancellable?: boolean } = {},
+): Promise<T | undefined> {
+  if (state.uiOperation) {
+    showToast(`${state.uiOperation} is still running.`, true);
+    return undefined;
+  }
   const label = button?.textContent;
-  if (button) { button.disabled = true; button.textContent = "Working…"; }
+  const controls = [...main.querySelectorAll<HTMLButtonElement>("button")].map((control) => ({ control, disabled: control.disabled }));
+  state.uiOperation = options.name ?? "Operation";
+  for (const { control } of controls) control.disabled = true;
+  if (button) button.textContent = "Working…";
+  let cancelButton: HTMLButtonElement | undefined;
+  if (button && options.cancellable) {
+    cancelButton = document.createElement("button");
+    cancelButton.className = "button secondary";
+    cancelButton.textContent = "Cancel preview";
+    cancelButton.dataset.testid = "cancel-preview";
+    cancelButton.addEventListener("click", async () => {
+      cancelButton!.disabled = true;
+      cancelButton!.textContent = "Cancelling…";
+      const result = await window.taskSync.cancelActiveOperation();
+      if (!result.accepted) showToast("The preview already finished or cannot be cancelled.", true);
+    });
+    button.insertAdjacentElement("afterend", cancelButton);
+  }
   try { return await work(); }
-  catch (error) { showToast(errorMessage(error), true); return undefined; }
-  finally { if (button) { button.disabled = false; button.textContent = label ?? "Continue"; } }
+  catch (error) {
+    const message = errorMessage(error);
+    showToast(/cancelled/i.test(message) ? "Preview cancelled." : message, !/cancelled/i.test(message));
+    return undefined;
+  }
+  finally {
+    cancelButton?.remove();
+    for (const { control, disabled } of controls) {
+      if (control.isConnected) control.disabled = disabled;
+    }
+    if (button?.isConnected) button.textContent = label ?? "Continue";
+    delete state.uiOperation;
+  }
 }
 
 function updateNav(): void {
@@ -68,6 +105,10 @@ async function refreshBootstrap(): Promise<void> {
 }
 
 function route(next: Route): void {
+  if (state.uiOperation) {
+    showToast(`${state.uiOperation} is still running. Cancel it before leaving this page.`, true);
+    return;
+  }
   state.route = next;
   updateNav();
   void render();
@@ -295,7 +336,11 @@ function renderDashboard(): void {
 }
 
 async function preview(button: HTMLButtonElement, source: "canvas" | "classroom" | "all" = "canvas"): Promise<void> {
-  const plan = await runBusy(button, () => window.taskSync.createPlan({ source, forceReenrich: false }));
+  const plan = await runBusy(
+    button,
+    () => window.taskSync.createPlan({ source, forceReenrich: false }),
+    { name: "Preview", cancellable: true },
+  );
   if (!plan) return;
   state.plan = plan; state.planFilter = "all"; await refreshBootstrap(); route("plan");
 }

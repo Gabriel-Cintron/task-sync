@@ -4,6 +4,7 @@ import { IPC, type FileKind, type TaskSyncDesktopApi } from "./bridge.js";
 
 const api: TaskSyncDesktopApi = {
   getBootstrapState: () => ipcRenderer.invoke(IPC.bootstrap) as ReturnType<TaskSyncDesktopApi["getBootstrapState"]>,
+  cancelActiveOperation: () => ipcRenderer.invoke(IPC.cancelOperation) as ReturnType<TaskSyncDesktopApi["cancelActiveOperation"]>,
   importExistingSetup: (input: ImportRequest) => ipcRenderer.invoke(IPC.importSetup, input) as ReturnType<TaskSyncDesktopApi["importExistingSetup"]>,
   saveSetup: (input: SetupInput) => ipcRenderer.invoke(IPC.saveSetup, input) as ReturnType<TaskSyncDesktopApi["saveSetup"]>,
   removeCredential: (provider: Provider) => ipcRenderer.invoke(IPC.removeCredential, provider) as ReturnType<TaskSyncDesktopApi["removeCredential"]>,
