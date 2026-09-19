@@ -271,21 +271,35 @@ async function renderMappingSetup(): Promise<void> {
     const mapping = state.bootstrap!.config.courseMappings.find((value) => value.sourceType === "canvas" && value.courseExternalId === course.externalId);
     const destination = mapping ? state.bootstrap!.config.destinations[mapping.destinationKey] : undefined;
     const selected = destination ? choices.findIndex((choice) => choice.projectId === destination.projectId && choice.sectionId === destination.sectionId) : 0;
-    return `<div class="mapping-row"><div><strong>${escapeHtml(course.name)}</strong><div class="muted">Canvas course ${escapeHtml(course.externalId)}</div></div><select data-course-id="${escapeHtml(course.externalId)}" data-course-name="${escapeHtml(course.name)}">${choices.map((choice, index) => `<option value="${index}" ${index === Math.max(0, selected) ? "selected" : ""}>${escapeHtml(choice.label)}</option>`).join("")}</select></div>`;
+    const enabled = mapping?.enabled !== false;
+    return `<div class="mapping-row ${enabled ? "" : "excluded"}" data-mapping-row>
+      <div><strong>${escapeHtml(course.name)}</strong><div class="muted">Canvas course ${escapeHtml(course.externalId)}</div></div>
+      <div class="mapping-controls"><label class="course-toggle"><input type="checkbox" data-course-enabled data-testid="course-enabled" ${enabled ? "checked" : ""}> Include in sync</label><select data-course-id="${escapeHtml(course.externalId)}" data-course-name="${escapeHtml(course.name)}" ${enabled ? "" : "disabled"}>${choices.map((choice, index) => `<option value="${index}" ${index === Math.max(0, selected) ? "selected" : ""}>${escapeHtml(choice.label)}</option>`).join("")}</select></div>
+    </div>`;
   }).join("");
   main.querySelector(".card")!.innerHTML = `${rows || '<div class="empty"><div class="empty-icon">✓</div><p>No active Canvas courses were returned.</p></div>'}<div class="button-row"><button class="button secondary" id="back">Back</button><button class="button primary" id="save-mappings" data-testid="mapping-continue">Save mappings and continue</button></div>`;
+  main.querySelectorAll<HTMLElement>("[data-mapping-row]").forEach((row) => {
+    const checkbox = row.querySelector<HTMLInputElement>("[data-course-enabled]")!;
+    const select = row.querySelector<HTMLSelectElement>("[data-course-id]")!;
+    checkbox.addEventListener("change", () => {
+      select.disabled = !checkbox.checked;
+      row.classList.toggle("excluded", !checkbox.checked);
+    });
+  });
   main.querySelector("#back")?.addEventListener("click", () => { state.setupStep = 2; renderSetup(); });
   main.querySelector<HTMLButtonElement>("#save-mappings")?.addEventListener("click", async (event) => {
     const config = structuredClone(state.bootstrap!.config);
     const destinations: AppConfig["destinations"] = { inbox: {} };
     const mappings: AppConfig["courseMappings"] = [];
-    main.querySelectorAll<HTMLSelectElement>("[data-course-id]").forEach((select) => {
+    main.querySelectorAll<HTMLElement>("[data-mapping-row]").forEach((row) => {
+      const select = row.querySelector<HTMLSelectElement>("[data-course-id]")!;
+      const enabled = row.querySelector<HTMLInputElement>("[data-course-enabled]")!.checked;
       const choice = choices[Number(select.value)] ?? choices[0]!;
       const projectId = choice.projectId;
       const sectionId = choice.sectionId;
       const key = sectionId ? `section_${sectionId.replace(/[^a-zA-Z0-9_-]/g, "_")}` : projectId ? `project_${projectId.replace(/[^a-zA-Z0-9_-]/g, "_")}` : "inbox";
       if (projectId) destinations[key] = { projectId, ...(sectionId ? { sectionId } : {}) };
-      mappings.push({ sourceType: "canvas", connectionId: config.sources.canvas.connectionId, courseExternalId: select.dataset.courseId!, destinationKey: key });
+      mappings.push({ sourceType: "canvas", connectionId: config.sources.canvas.connectionId, courseExternalId: select.dataset.courseId!, destinationKey: key, enabled });
     });
     config.destinations = destinations; config.courseMappings = mappings; config.defaultDestinationKey = "inbox";
     const saved = await runBusy(event.currentTarget as HTMLButtonElement, () => window.taskSync.saveSetup({ config }));
@@ -373,8 +387,10 @@ function renderPlanAction(action: PlanView["plan"]["actions"][number]): string {
   const candidate = action.candidate;
   const title = candidate?.resolvedTitle ?? action.sourceKey;
   return `<details class="plan-item" data-kind="${action.kind}"><summary><span class="badge ${action.kind}">${action.kind}</span><span class="plan-title">${escapeHtml(title)}</span><span aria-hidden="true">⌄</span></summary><div class="plan-detail">
-    <div><strong>Destination</strong>${escapeHtml(candidate?.destinationKey ?? "Not resolved")}</div><div><strong>Deadline</strong>${escapeHtml(candidate?.resolvedDeadlineAt ? friendlyDate(candidate.resolvedDeadlineAt) : "None")} · ${escapeHtml(candidate?.deadlineOrigin ?? "none")}</div>
+    <div><strong>Course</strong>${escapeHtml(candidate?.source.course?.name ?? "Not provided")}</div><div><strong>Canvas status</strong>${escapeHtml(candidate?.source.status ?? "unknown")}</div>
+    <div><strong>Destination</strong>${escapeHtml(candidate?.destinationKey ?? "Not resolved")}</div><div><strong>Due date</strong>${escapeHtml(candidate?.resolvedDeadlineAt ? friendlyDate(candidate.resolvedDeadlineAt) : "None")} · ${escapeHtml(candidate?.deadlineOrigin ?? "none")}</div>
     <div><strong>Reason</strong>${escapeHtml(action.reason)}</div><div><strong>Warnings</strong>${escapeHtml(candidate?.warnings.join(" · ") || "None")}</div>
+    ${candidate?.resolvedDescription ? `<div class="plan-description"><strong>Todoist description</strong>${escapeHtml(candidate.resolvedDescription.replace(/\n*<!-- task-sync:[\s\S]*? -->\s*$/, ""))}</div>` : ""}
     ${candidate?.source.sourceUrl ? `<div><strong>Source</strong><button class="button secondary" data-source-url="${escapeHtml(candidate.source.sourceUrl)}">Open source page</button></div>` : ""}
   </div></details>`;
 }

@@ -94,6 +94,8 @@ export type TodoistTask = {
   sectionId?: string;
   labels: string[];
   deadlineAt?: string;
+  deadlinePrecision?: "date" | "datetime";
+  dateKind?: "due" | "deadline";
 };
 
 export type TodoistTaskInput = Omit<TodoistTask, "id">;

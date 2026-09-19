@@ -18,6 +18,8 @@ const CanvasAssignmentSchema = z.object({
   due_at: z.string().datetime({ offset: true }).nullish(),
   html_url: z.string().url().nullish(),
   updated_at: z.string().datetime({ offset: true }).nullish(),
+  points_possible: z.number().nullish(),
+  submission_types: z.array(z.string()).optional(),
   submission: z.object({
     workflow_state: z.string().optional(),
     submitted_at: z.string().nullish(),
@@ -60,7 +62,12 @@ export function normalizeCanvasAssignment(courseInput: unknown, assignmentInput:
     ...(raw.html_url ? { sourceUrl: raw.html_url } : {}),
     status: canvasStatus(raw.submission),
     ...(raw.updated_at ? { sourceUpdatedAt: raw.updated_at } : {}),
-    providerMetadata: { canvasWorkflowState: raw.submission?.workflow_state ?? null },
+    providerMetadata: {
+      canvasWorkflowState: raw.submission?.workflow_state ?? null,
+      submittedAt: raw.submission?.submitted_at ?? null,
+      pointsPossible: raw.points_possible ?? null,
+      submissionTypes: raw.submission_types ?? [],
+    },
   };
   return ExternalItemSchema.parse({ ...base, rawFingerprint: externalItemFingerprint(base) });
 }
@@ -73,13 +80,17 @@ export class CanvasAdapter implements SourceAdapter {
     private readonly baseUrl: string,
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly excludedCourseIds?: ReadonlySet<string>,
     private readonly requestTimeoutMs = DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS,
   ) {
     if (!baseUrl.startsWith("https://")) throw new ProviderError("configuration", "CANVAS_BASE_URL must use HTTPS");
   }
 
   public async listItems(options: { signal?: AbortSignal } = {}): Promise<ExternalItem[]> {
-    const courses = await this.listCourses(options);
+    const discoveredCourses = await this.listCourses(options);
+    const courses = this.excludedCourseIds
+      ? discoveredCourses.filter((course) => !this.excludedCourseIds!.has(course.externalId))
+      : discoveredCourses;
     const items: ExternalItem[] = [];
     for (const course of courses) {
       const courseId = course.externalId;

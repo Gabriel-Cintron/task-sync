@@ -12,6 +12,7 @@ const TodoistTaskSchema = z.object({
   project_id: z.string().nullish(),
   section_id: z.string().nullish(),
   labels: z.array(z.string()).default([]),
+  due: z.object({ date: z.string(), datetime: z.string().nullish() }).nullish(),
   deadline: z.object({ date: z.string() }).nullish(),
 }).passthrough();
 
@@ -30,6 +31,8 @@ const NamedResourcePageSchema = z.object({
 }).passthrough();
 
 function normalize(raw: z.infer<typeof TodoistTaskSchema>): TodoistTask {
+  const dueAt = raw.due?.datetime ?? (raw.due?.date ? `${raw.due.date}T23:59:59.000Z` : undefined);
+  const deadlineAt = dueAt ?? (raw.deadline?.date ? `${raw.deadline.date}T23:59:59.000Z` : undefined);
   return {
     id: raw.id,
     content: raw.content,
@@ -37,7 +40,11 @@ function normalize(raw: z.infer<typeof TodoistTaskSchema>): TodoistTask {
     ...(raw.project_id ? { projectId: raw.project_id } : {}),
     ...(raw.section_id ? { sectionId: raw.section_id } : {}),
     labels: raw.labels,
-    ...(raw.deadline?.date ? { deadlineAt: `${raw.deadline.date}T23:59:59.000Z` } : {}),
+    ...(deadlineAt ? {
+      deadlineAt,
+      deadlinePrecision: raw.due?.datetime ? "datetime" as const : "date" as const,
+      dateKind: raw.due ? "due" as const : "deadline" as const,
+    } : {}),
   };
 }
 
@@ -142,13 +149,19 @@ export class TodoistAdapter implements TodoistDestination {
   }
 
   private payload(input: TodoistTaskInput, includeDestination: boolean): Record<string, unknown> {
+    const due = input.deadlineAt
+      ? input.deadlinePrecision === "date"
+        ? { due_date: input.deadlineAt.slice(0, 10) }
+        : { due_datetime: new Date(input.deadlineAt).toISOString() }
+      : { due_date: null };
     return {
       content: input.content,
       description: input.description,
       labels: input.labels,
       ...(includeDestination && input.projectId ? { project_id: input.projectId } : {}),
       ...(includeDestination && input.sectionId ? { section_id: input.sectionId } : {}),
-      deadline_date: input.deadlineAt ? input.deadlineAt.slice(0, 10) : null,
+      ...due,
+      deadline_date: null,
     };
   }
 

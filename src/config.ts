@@ -13,6 +13,7 @@ export const CourseMappingSchema = z.object({
   courseExternalId: z.string().min(1).optional(),
   courseAlias: z.string().min(1).transform((value) => value.toLowerCase()).optional(),
   destinationKey: z.string().min(1),
+  enabled: z.boolean().default(true),
 }).strict().refine((value) => value.courseExternalId ?? value.courseAlias, {
   message: "A course mapping needs courseExternalId or courseAlias",
 });

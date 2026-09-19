@@ -11,6 +11,15 @@ import { OpenAIEnrichmentGenerator } from "./enrichment/openai-generator.js";
 
 export type RuntimeEnvironment = Record<string, string | undefined>;
 
+export function excludedCanvasCourseIds(config: AppConfig): ReadonlySet<string> | undefined {
+  const excluded = config.courseMappings.filter((mapping) =>
+    mapping.courseExternalId
+    && (!mapping.sourceType || mapping.sourceType === "canvas")
+    && (!mapping.connectionId || mapping.connectionId === config.sources.canvas.connectionId)
+    && !mapping.enabled);
+  return excluded.length ? new Set(excluded.map((mapping) => mapping.courseExternalId!)) : undefined;
+}
+
 export function createTodoistFromEnvironment(environment: RuntimeEnvironment = process.env): TodoistAdapter {
   const token = environment.TODOIST_API_TOKEN;
   if (!token) throw new Error("TODOIST_API_TOKEN is required");
@@ -33,7 +42,9 @@ export function createSources(config: AppConfig, selection: "canvas" | "classroo
   if (selection === "canvas" || selection === "all") {
     const baseUrl = environment.CANVAS_BASE_URL;
     const token = environment.CANVAS_ACCESS_TOKEN;
-    if (baseUrl && token) sources.push(new CanvasAdapter(config.sources.canvas.connectionId, baseUrl, token));
+    if (baseUrl && token) {
+      sources.push(new CanvasAdapter(config.sources.canvas.connectionId, baseUrl, token, fetch, excludedCanvasCourseIds(config)));
+    }
     else if (selection === "canvas") throw new Error("CANVAS_BASE_URL and CANVAS_ACCESS_TOKEN are required");
   }
   if (selection === "classroom" || selection === "all") {

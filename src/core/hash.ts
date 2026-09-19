@@ -37,7 +37,11 @@ export function candidateToTodoistInput(candidate: TaskCandidate): TodoistTaskIn
     ...(candidate.projectId ? { projectId: candidate.projectId } : {}),
     ...(candidate.sectionId ? { sectionId: candidate.sectionId } : {}),
     labels: candidate.labels,
-    ...(candidate.resolvedDeadlineAt ? { deadlineAt: candidate.resolvedDeadlineAt } : {}),
+    ...(candidate.resolvedDeadlineAt ? {
+      deadlineAt: candidate.resolvedDeadlineAt,
+      deadlinePrecision: candidate.source.duePrecision ?? "datetime",
+      dateKind: "due" as const,
+    } : {}),
   };
 }
 
@@ -50,6 +54,7 @@ export function destinationFingerprint(candidate: TaskCandidate): string {
     sectionId: input.sectionId ?? null,
     labels: input.labels,
     deadlineAt: input.deadlineAt?.slice(0, 10) ?? null,
+    dateKind: input.dateKind ?? null,
   }));
 }
 
@@ -61,5 +66,6 @@ export function todoistTaskFingerprint(task: TodoistTask): string {
     sectionId: task.sectionId ?? null,
     labels: task.labels,
     deadlineAt: task.deadlineAt?.slice(0, 10) ?? null,
+    dateKind: task.dateKind ?? null,
   }));
 }

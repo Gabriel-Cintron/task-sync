@@ -19,7 +19,7 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page; data: s
   return { app, page, data };
 }
 
-async function completeSetup(page: Page): Promise<void> {
+async function completeSetup(page: Page, includeCourse = true): Promise<void> {
   await page.getByTestId("start-fresh").click();
   await page.getByTestId("todoist-token").fill("test-token");
   await page.getByTestId("todoist-save").click();
@@ -31,6 +31,7 @@ async function completeSetup(page: Page): Promise<void> {
   await page.getByTestId("openai-skip").click();
   await expect(page.getByRole("heading", { name: "Map your courses" })).toBeVisible();
   await expect(page.getByText("Biology", { exact: true })).toBeVisible();
+  if (!includeCourse) await page.getByTestId("course-enabled").uncheck();
   await page.getByTestId("mapping-continue").click();
   await expect(page.getByRole("heading", { name: "Ready for your first preview" })).toBeVisible();
 }
@@ -45,6 +46,12 @@ test("fresh Canvas setup previews before writing and applies only safe rows once
     await expect(page.locator(".summary-cell").filter({ hasText: "conflict" })).toContainText("1");
     await expect(page.locator(".summary-cell").filter({ hasText: "error" })).toContainText("1");
     await expect(page.getByText("2 excluded rows.")).toBeVisible();
+    await page.locator('.plan-item[data-kind="create"] summary').click();
+    const createDetails = page.locator('.plan-item[data-kind="create"] .plan-detail');
+    await expect(createDetails).toContainText("Biology");
+    await expect(createDetails).toContainText("open");
+    await expect(createDetails).toContainText("2026-10-15T20:00:00.000Z");
+    await expect(createDetails).toContainText("Read the instructions and submit your work.");
     expect(existsSync(join(data, "todoist-writes.log"))).toBe(false);
     await page.getByRole("button", { name: "conflict 1" }).click();
     await expect(page.locator(".plan-item")).toHaveCount(1);
@@ -101,6 +108,20 @@ test("a running preview can be cancelled without leaving the operation lock behi
     await expect(page.getByRole("heading", { name: "Map your courses" })).toBeVisible();
     await page.getByTestId("mapping-continue").click();
     await expect(page.getByRole("heading", { name: "Ready for your first preview" })).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test("an omitted Canvas course produces no preview rows", async () => {
+  const { app, page, data } = await launch();
+  try {
+    await completeSetup(page, false);
+    await page.getByTestId("first-preview").click();
+    await expect(page.getByRole("heading", { name: "Review before applying" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "All 0" })).toBeVisible();
+    await expect(page.getByTestId("apply-plan")).toBeDisabled();
+    expect(existsSync(join(data, "todoist-writes.log"))).toBe(false);
   } finally {
     await app.close();
   }

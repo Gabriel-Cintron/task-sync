@@ -22,7 +22,7 @@ Choose one of these paths:
 2. Paste your Todoist API token, then click **Save and test connection**. Todoist is required because preview reads existing tasks to prevent duplicates.
 3. Enter the HTTPS root URL for your school's Canvas site and your Canvas access token. Click **Save and test connection**.
 4. Either add and test an OpenAI API key or click **Use deterministic fallback**. Fallback is the recommended starting mode and does not require an OpenAI account.
-5. Map each discovered Canvas course to a Todoist project. Leaving a course in **Todoist Inbox** is valid.
+5. Choose which Canvas courses to include, then map each included course to a Todoist project. Clear **Include in sync** for old, advisory, or otherwise unwanted courses. Leaving an included course in **Todoist Inbox** is valid.
 6. Review the connection summary and click **Preview Canvas sync**.
 
 The token fields are write-only. After saving, the UI reports only whether each credential is configured. A blank edit preserves the current value. Use the separate **Remove** button when you intentionally want to delete one.
@@ -54,7 +54,7 @@ The review screen groups rows as:
 | `conflict` | Excluded from apply. Resolve the ambiguity and preview again. |
 | `error` | Excluded from apply. Check the expanded reason. |
 
-Expand a row to review its destination, deadline and deadline origin, source link, warnings, and reason. **Apply safe changes** writes only `create` and `update` rows from that exact saved preview.
+Expand a row to review its course, Canvas submission status, due date and origin, full Todoist description, source link, warnings, and reason. The Todoist description includes useful Canvas metadata, assignment instructions, and the source link. Canvas deadlines are written as Todoist due dates/datetimes. **Apply safe changes** writes only `create` and `update` rows from that exact saved preview.
 
 A preview expires after 15 minutes, cannot be applied after settings change, and can be attempted only once. If any of those checks fails, create a fresh preview. A partial provider failure is recorded in history; preview again before retrying.
 

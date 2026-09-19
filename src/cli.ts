@@ -65,7 +65,7 @@ function printSync(plan: SyncPlan, applied: ApplyResult | undefined, json: boole
 }
 
 const program = new Command();
-program.name("task-sync").description("Safely sync school obligations to Todoist").version("0.1.0");
+program.name("task-sync").description("Safely sync school obligations to Todoist").version("0.1.3");
 
 program.command("sync")
   .description("Plan a sync; only write to Todoist with --apply")

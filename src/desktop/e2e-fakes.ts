@@ -85,7 +85,18 @@ export function createSmokeFactories(): ApplicationFactories {
     todoist: () => todoist,
     canvas: () => canvas,
     classroom: () => ({ sourceType: "google_classroom", connectionId: "classroom", listItems: () => Promise.resolve([]), diagnose: () => report("Google Classroom"), authorize: () => Promise.resolve() }),
-    sources: (_config: AppConfig, selection) => selection === "classroom" ? [] : [canvas],
+    sources: (config: AppConfig, selection) => selection === "classroom" ? [] : [{
+      sourceType: canvas.sourceType,
+      connectionId: canvas.connectionId,
+      diagnose: () => canvas.diagnose(),
+      listItems: async (options) => {
+        const items = await canvas.listItems(options);
+        const excluded = new Set(config.courseMappings
+          .filter((mapping) => mapping.sourceType === "canvas" && mapping.connectionId === canvas.connectionId && mapping.courseExternalId && !mapping.enabled)
+          .map((mapping) => mapping.courseExternalId));
+        return items.filter((value) => !value.course || !excluded.has(value.course.externalId));
+      },
+    }],
     enrichment: () => enrichment(),
     openAI: () => ({ generate: (source) => Promise.resolve({ isActionable: true, cleanedTitle: source.title, suggestedLabels: [], confidence: 1, warnings: [] }) }),
   };

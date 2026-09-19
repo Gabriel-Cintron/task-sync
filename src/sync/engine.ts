@@ -6,6 +6,7 @@ import type {
   ItemOutcome,
   SyncAction,
   SyncPlan,
+  TaskEnrichment,
 } from "../core/models.js";
 import type { EnrichmentService, SourceAdapter, SyncRepository, TodoistDestination } from "../core/ports.js";
 import { buildCandidate, stableMarker } from "./policy.js";
@@ -55,18 +56,31 @@ export class SyncEngine {
         const key = sourceKey(item.ref);
         this.repository.recordSource(item);
         if ((item.status === "submitted" || item.status === "completed") && this.config.sync.completedSourceItems === "skip") {
-          actions.push({ kind: "skip", sourceKey: key, reason: `Source item is ${item.status}; completion policy is skip` });
+          const skippedEnrichment: TaskEnrichment = {
+            isActionable: false,
+            cleanedTitle: item.title,
+            ...(item.description ? { conciseDescription: item.description } : {}),
+            suggestedLabels: [],
+            confidence: 1,
+            warnings: [],
+          };
+          actions.push({
+            kind: "skip",
+            sourceKey: key,
+            candidate: buildCandidate(item, skippedEnrichment, this.config),
+            reason: `Source item is ${item.status}; completion policy is skip`,
+          });
           continue;
         }
 
         try {
           const enriched = await this.enrichment.enrich(item, { force: options.forceReenrich ?? false, ...(options.signal ? { signal: options.signal } : {}) });
           enrichmentCounts[enriched.provenance.status] += 1;
+          const candidate = buildCandidate(item, enriched.enrichment, this.config);
           if (!enriched.enrichment.isActionable) {
-            actions.push({ kind: "skip", sourceKey: key, reason: "Enrichment classified item as non-actionable" });
+            actions.push({ kind: "skip", sourceKey: key, candidate, reason: "Enrichment classified item as non-actionable" });
             continue;
           }
-          const candidate = buildCandidate(item, enriched.enrichment, this.config);
           const fingerprint = destinationFingerprint(candidate);
           const mapping = this.repository.getMapping(key);
           if (mapping) {

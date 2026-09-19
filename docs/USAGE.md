@@ -244,7 +244,8 @@ Map courses by their provider ID whenever possible:
       "sourceType": "canvas",
       "connectionId": "my-school-canvas",
       "courseExternalId": "12345",
-      "destinationKey": "math"
+      "destinationKey": "math",
+      "enabled": true
     },
     {
       "sourceType": "google_classroom",
@@ -255,6 +256,8 @@ Map courses by their provider ID whenever possible:
   ]
 }
 ```
+
+Set `enabled` to `false` to omit a course from Canvas fetching and all sync previews. The desktop setup screen manages this with the **Include in sync** checkbox. Existing configurations that omit `enabled` continue to include the course.
 
 Mapping order is deterministic:
 
@@ -496,4 +499,3 @@ The third command should primarily report `unchanged` or policy-driven `skip` ac
 | `npm run sync -- --source canvas` | Plan Canvas synchronization. | No |
 | `npm run sync -- --source classroom` | Plan Classroom synchronization. | No |
 | `npm run sync -- --source all --apply` | Plan and apply all configured sources. | Yes |
-

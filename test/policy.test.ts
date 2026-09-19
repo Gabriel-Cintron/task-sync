@@ -21,6 +21,10 @@ describe("deterministic candidate policy", () => {
     expect(candidate.resolvedDeadlineAt).toBe(messyAssignmentFixture.dueAt);
     expect(candidate.deadlineOrigin).toBe("source");
     expect(candidate.warnings.join(" ")).toContain("Ignored inferred deadline");
+    expect(candidate.resolvedDescription).toContain("**Course:** Chemistry I - Period 3 - Fall");
+    expect(candidate.resolvedDescription).toContain("**Status:** Open");
+    expect(candidate.resolvedDescription).toContain("**Due (source):** 2026-10-03T20:00:00.000-04:00");
+    expect(candidate.resolvedDescription).toContain("Submit one PDF");
   });
 
   it("confidence-gates inferred deadlines", () => {

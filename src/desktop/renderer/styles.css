@@ -93,7 +93,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .diagnostic { margin-top: 14px; padding: 13px; border-radius: 10px; background: #f0f2ed; font-size: 13px; }
 .diagnostic.ok { color: var(--green); background: var(--green-soft); }
 .diagnostic.error { color: var(--red); background: var(--red-soft); }
-.mapping-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .8fr); gap: 14px; align-items: end; margin: 12px 0; }
+.mapping-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .8fr); gap: 14px; align-items: center; margin: 12px 0; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.mapping-row.excluded { opacity: .58; }
+.mapping-controls { display: grid; gap: 8px; }
+.course-toggle { display: flex; align-items: center; gap: 8px; margin: 0; }
+.course-toggle input { width: auto; margin: 0; accent-color: var(--green); }
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }
 .filter-button { border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px; background: white; color: var(--muted); font-size: 12px; font-weight: 750; }
 .filter-button.active { color: white; background: var(--green); border-color: var(--green); }
@@ -104,6 +108,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .plan-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 750; }
 .plan-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 0 17px 17px 60px; color: var(--muted); font-size: 13px; }
 .plan-detail strong { display: block; color: var(--ink); margin-bottom: 3px; }
+.plan-description { grid-column: 1 / -1; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border-radius: 9px; background: #f3f4ef; }
 .summary-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; margin-bottom: 16px; }
 .summary-cell { padding: 13px 10px; border: 1px solid var(--line); border-radius: 11px; text-align: center; background: var(--paper); }
 .summary-cell strong, .summary-cell span { display: block; }

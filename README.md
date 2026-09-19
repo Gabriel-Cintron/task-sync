@@ -103,7 +103,7 @@ The refresh token is written to the gitignored `GOOGLE_TOKEN_FILE`. A school Wor
 
 ### Todoist
 
-Set `TODOIST_API_TOKEN`. LMS deadlines map to Todoist's date-only `deadline_date`, not Todoist's personal scheduling/due-date fields. The full authoritative timestamp and whether it was source-provided or inferred remain visible in the task description and SQLite audit data.
+Set `TODOIST_API_TOKEN`. LMS deadlines map to Todoist's due date or due datetime fields. The full authoritative timestamp and whether it was source-provided or inferred also remain visible in the task description and SQLite audit data.
 
 ## Commands
 
