@@ -81,6 +81,7 @@ export class CanvasAdapter implements SourceAdapter {
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly excludedCourseIds?: ReadonlySet<string>,
+    private readonly includeUndatedAssignments = true,
     private readonly requestTimeoutMs = DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS,
   ) {
     if (!baseUrl.startsWith("https://")) throw new ProviderError("configuration", "CANVAS_BASE_URL must use HTTPS");
@@ -100,7 +101,8 @@ export class CanvasAdapter implements SourceAdapter {
         options.signal,
       );
       for (const raw of assignments) {
-        items.push(normalizeCanvasAssignment({ id: course.externalId, name: course.name }, raw, this.connectionId));
+        const item = normalizeCanvasAssignment({ id: course.externalId, name: course.name }, raw, this.connectionId);
+        if (this.includeUndatedAssignments || item.dueAt) items.push(item);
       }
     }
     return items;

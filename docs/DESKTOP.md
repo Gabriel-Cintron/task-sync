@@ -22,7 +22,7 @@ Choose one of these paths:
 2. Paste your Todoist API token, then click **Save and test connection**. Todoist is required because preview reads existing tasks to prevent duplicates.
 3. Enter the HTTPS root URL for your school's Canvas site and your Canvas access token. Click **Save and test connection**.
 4. Either add and test an OpenAI API key or click **Use deterministic fallback**. Fallback is the recommended starting mode and does not require an OpenAI account.
-5. Choose which Canvas courses to include, then map each included course to a Todoist project. Clear **Include in sync** for old, advisory, or otherwise unwanted courses. Leaving an included course in **Todoist Inbox** is valid.
+5. Choose which Canvas courses to include, then map each included course to a Todoist project. Clear **Include in sync** for old, advisory, or otherwise unwanted courses. Turn off **Include assignments without a due date** if those should not appear in previews. Leaving an included course in **Todoist Inbox** is valid.
 6. Review the connection summary and click **Preview Canvas sync**.
 
 The token fields are write-only. After saving, the UI reports only whether each credential is configured. A blank edit preserves the current value. Use the separate **Remove** button when you intentionally want to delete one.
@@ -67,8 +67,9 @@ The **Recent history** view shows the latest 20 preview/apply runs. Open a run t
 Settings lets you:
 
 - replace or explicitly remove credentials;
+- choose System, Light, or Dark appearance;
 - choose `fallback`, `required`, or `disabled` enrichment;
-- change the OpenAI model, confidence thresholds, allowed labels, and completed-item policy;
+- change the OpenAI model, confidence thresholds, allowed labels, completed-item policy, and undated-assignment policy;
 - review local configuration, database, and secrets locations;
 - enable Google Classroom under **Advanced**.
 

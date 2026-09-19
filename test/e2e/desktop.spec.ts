@@ -19,7 +19,7 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page; data: s
   return { app, page, data };
 }
 
-async function completeSetup(page: Page, includeCourse = true): Promise<void> {
+async function completeSetup(page: Page, includeCourse = true, includeUndated = true): Promise<void> {
   await page.getByTestId("start-fresh").click();
   await page.getByTestId("todoist-token").fill("test-token");
   await page.getByTestId("todoist-save").click();
@@ -32,6 +32,7 @@ async function completeSetup(page: Page, includeCourse = true): Promise<void> {
   await expect(page.getByRole("heading", { name: "Map your courses" })).toBeVisible();
   await expect(page.getByText("Biology", { exact: true })).toBeVisible();
   if (!includeCourse) await page.getByTestId("course-enabled").uncheck();
+  if (!includeUndated) await page.getByTestId("include-undated").uncheck();
   await page.getByTestId("mapping-continue").click();
   await expect(page.getByRole("heading", { name: "Ready for your first preview" })).toBeVisible();
 }
@@ -122,6 +123,25 @@ test("an omitted Canvas course produces no preview rows", async () => {
     await expect(page.getByRole("button", { name: "All 0" })).toBeVisible();
     await expect(page.getByTestId("apply-plan")).toBeDisabled();
     expect(existsSync(join(data, "todoist-writes.log"))).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("persists the undated-assignment filter and dark theme", async () => {
+  const { app, page } = await launch();
+  try {
+    await completeSetup(page, true, false);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Your sync workspace" })).toBeVisible();
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByTestId("theme-select").selectOption("dark");
+    await page.getByTestId("save-settings").click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect.poll(() => page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(17, 22, 19)");
+    const config = await page.evaluate(async () => (await window.taskSync.getBootstrapState()).config);
+    expect(config.sync.undatedSourceItems).toBe("skip");
+    expect(config.appearance.theme).toBe("dark");
   } finally {
     await app.close();
   }

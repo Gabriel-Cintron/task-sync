@@ -43,7 +43,14 @@ export function createSources(config: AppConfig, selection: "canvas" | "classroo
     const baseUrl = environment.CANVAS_BASE_URL;
     const token = environment.CANVAS_ACCESS_TOKEN;
     if (baseUrl && token) {
-      sources.push(new CanvasAdapter(config.sources.canvas.connectionId, baseUrl, token, fetch, excludedCanvasCourseIds(config)));
+      sources.push(new CanvasAdapter(
+        config.sources.canvas.connectionId,
+        baseUrl,
+        token,
+        fetch,
+        excludedCanvasCourseIds(config),
+        config.sync.undatedSourceItems === "include",
+      ));
     }
     else if (selection === "canvas") throw new Error("CANVAS_BASE_URL and CANVAS_ACCESS_TOKEN are required");
   }

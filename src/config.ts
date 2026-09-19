@@ -30,7 +30,11 @@ export const AppConfigSchema = z.object({
   }).strict().default({}),
   sync: z.object({
     completedSourceItems: z.enum(["skip", "include"]).default("skip"),
+    undatedSourceItems: z.enum(["skip", "include"]).default("include"),
     missingSourceItems: z.literal("retain").default("retain"),
+  }).strict().default({}),
+  appearance: z.object({
+    theme: z.enum(["system", "light", "dark"]).default("system"),
   }).strict().default({}),
   destinations: z.record(DestinationSchema).default({ inbox: {} }),
   defaultDestinationKey: z.string().min(1).default("inbox"),

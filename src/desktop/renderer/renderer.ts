@@ -48,6 +48,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function applyTheme(theme: AppConfig["appearance"]["theme"]): void {
+  if (theme === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.dataset.theme = theme;
+}
+
 async function runBusy<T>(
   button: HTMLButtonElement | null,
   work: () => Promise<T>,
@@ -102,6 +107,7 @@ function updateNav(): void {
 
 async function refreshBootstrap(): Promise<void> {
   state.bootstrap = await window.taskSync.getBootstrapState();
+  applyTheme(state.bootstrap.config.appearance.theme);
 }
 
 function route(next: Route): void {
@@ -277,7 +283,8 @@ async function renderMappingSetup(): Promise<void> {
       <div class="mapping-controls"><label class="course-toggle"><input type="checkbox" data-course-enabled data-testid="course-enabled" ${enabled ? "checked" : ""}> Include in sync</label><select data-course-id="${escapeHtml(course.externalId)}" data-course-name="${escapeHtml(course.name)}" ${enabled ? "" : "disabled"}>${choices.map((choice, index) => `<option value="${index}" ${index === Math.max(0, selected) ? "selected" : ""}>${escapeHtml(choice.label)}</option>`).join("")}</select></div>
     </div>`;
   }).join("");
-  main.querySelector(".card")!.innerHTML = `${rows || '<div class="empty"><div class="empty-icon">✓</div><p>No active Canvas courses were returned.</p></div>'}<div class="button-row"><button class="button secondary" id="back">Back</button><button class="button primary" id="save-mappings" data-testid="mapping-continue">Save mappings and continue</button></div>`;
+  const includeUndated = state.bootstrap!.config.sync.undatedSourceItems === "include";
+  main.querySelector(".card")!.innerHTML = `<div class="sync-option"><label class="course-toggle"><input type="checkbox" id="include-undated" data-testid="include-undated" ${includeUndated ? "checked" : ""}> Include assignments without a due date</label><p class="field-hint">Turn this off to keep undated Canvas assignments out of previews and Todoist.</p></div>${rows || '<div class="empty"><div class="empty-icon">✓</div><p>No active Canvas courses were returned.</p></div>'}<div class="button-row"><button class="button secondary" id="back">Back</button><button class="button primary" id="save-mappings" data-testid="mapping-continue">Save mappings and continue</button></div>`;
   main.querySelectorAll<HTMLElement>("[data-mapping-row]").forEach((row) => {
     const checkbox = row.querySelector<HTMLInputElement>("[data-course-enabled]")!;
     const select = row.querySelector<HTMLSelectElement>("[data-course-id]")!;
@@ -302,6 +309,7 @@ async function renderMappingSetup(): Promise<void> {
       mappings.push({ sourceType: "canvas", connectionId: config.sources.canvas.connectionId, courseExternalId: select.dataset.courseId!, destinationKey: key, enabled });
     });
     config.destinations = destinations; config.courseMappings = mappings; config.defaultDestinationKey = "inbox";
+    config.sync.undatedSourceItems = main.querySelector<HTMLInputElement>("#include-undated")!.checked ? "include" : "skip";
     const saved = await runBusy(event.currentTarget as HTMLButtonElement, () => window.taskSync.saveSetup({ config }));
     if (!saved) return; state.bootstrap = { ...state.bootstrap!, ...saved }; state.setupStep = 4; renderSetup();
   });
@@ -420,7 +428,8 @@ function renderSettings(): void {
   const config = bootstrap.config;
   main.innerHTML = `<section class="page"><div class="page-header"><div><p class="eyebrow">Settings</p><h1>Connections and behavior</h1><p class="lede">Blank credential fields preserve what is already saved. Removing a credential is always a separate action.</p></div></div>
     <div class="card"><h2>Credentials</h2>${(["todoist", "canvas", "openai"] as Provider[]).map((provider) => `<div class="provider-row"><div><strong>${providerNames[provider]}</strong><div class="muted">${bootstrap.credentials[provider] ? "Configured locally" : "Not configured"}</div></div><div class="button-row"><button class="button secondary" data-edit-provider="${provider}">Edit</button>${bootstrap.credentials[provider] ? `<button class="button danger" data-remove-provider="${provider}">Remove</button>` : ""}</div></div>`).join("")}</div>
-    <div class="card"><h2>Enrichment and sync</h2><div class="grid two"><div class="field"><label for="mode">Enrichment mode</label><select id="mode"><option value="fallback" ${config.enrichment.mode === "fallback" ? "selected" : ""}>Fallback if OpenAI is unavailable</option><option value="required" ${config.enrichment.mode === "required" ? "selected" : ""}>Require OpenAI</option><option value="disabled" ${config.enrichment.mode === "disabled" ? "selected" : ""}>Deterministic only</option></select></div><div class="field"><label for="model">OpenAI model</label><input id="model" value="${escapeHtml(config.enrichment.model)}"></div><div class="field"><label for="due-confidence">Inferred due-date confidence</label><input id="due-confidence" type="number" min="0" max="1" step="0.01" value="${config.enrichment.inferredDueConfidence}"></div><div class="field"><label for="mapping-confidence">Mapping confidence</label><input id="mapping-confidence" type="number" min="0" max="1" step="0.01" value="${config.enrichment.mappingConfidence}"></div></div><div class="field"><label for="labels">Allowed labels (comma separated)</label><input id="labels" value="${escapeHtml(config.enrichment.allowedLabels.join(", "))}"></div><div class="field"><label for="completed">Completed source items</label><select id="completed"><option value="skip" ${config.sync.completedSourceItems === "skip" ? "selected" : ""}>Skip</option><option value="include" ${config.sync.completedSourceItems === "include" ? "selected" : ""}>Include</option></select></div><button class="button primary" id="save-settings">Save behavior</button></div>
+    <div class="card"><h2>Appearance</h2><div class="field"><label for="theme">Color theme</label><select id="theme" data-testid="theme-select"><option value="system" ${config.appearance.theme === "system" ? "selected" : ""}>Use system setting</option><option value="light" ${config.appearance.theme === "light" ? "selected" : ""}>Light</option><option value="dark" ${config.appearance.theme === "dark" ? "selected" : ""}>Dark</option></select></div></div>
+    <div class="card"><h2>Enrichment and sync</h2><div class="grid two"><div class="field"><label for="mode">Enrichment mode</label><select id="mode"><option value="fallback" ${config.enrichment.mode === "fallback" ? "selected" : ""}>Fallback if OpenAI is unavailable</option><option value="required" ${config.enrichment.mode === "required" ? "selected" : ""}>Require OpenAI</option><option value="disabled" ${config.enrichment.mode === "disabled" ? "selected" : ""}>Deterministic only</option></select></div><div class="field"><label for="model">OpenAI model</label><input id="model" value="${escapeHtml(config.enrichment.model)}"></div><div class="field"><label for="due-confidence">Inferred due-date confidence</label><input id="due-confidence" type="number" min="0" max="1" step="0.01" value="${config.enrichment.inferredDueConfidence}"></div><div class="field"><label for="mapping-confidence">Mapping confidence</label><input id="mapping-confidence" type="number" min="0" max="1" step="0.01" value="${config.enrichment.mappingConfidence}"></div></div><div class="field"><label for="labels">Allowed labels (comma separated)</label><input id="labels" value="${escapeHtml(config.enrichment.allowedLabels.join(", "))}"></div><div class="grid two"><div class="field"><label for="completed">Submitted/completed assignments</label><select id="completed"><option value="skip" ${config.sync.completedSourceItems === "skip" ? "selected" : ""}>Skip</option><option value="include" ${config.sync.completedSourceItems === "include" ? "selected" : ""}>Include</option></select></div><div class="field"><label for="undated">Assignments without due dates</label><select id="undated" data-testid="undated-select"><option value="include" ${config.sync.undatedSourceItems === "include" ? "selected" : ""}>Include</option><option value="skip" ${config.sync.undatedSourceItems === "skip" ? "selected" : ""}>Skip</option></select></div></div><button class="button primary" id="save-settings" data-testid="save-settings">Save behavior</button></div>
     <div class="card"><h2>Course mappings</h2><p class="muted">Rediscover Canvas courses and map them to Todoist projects or sections.</p><button class="button secondary" id="remap-courses">Edit course mappings</button></div>
     <div class="card"><h2>Advanced · Google Classroom</h2><p class="muted">Optional. Canvas works without Classroom. Choose the Desktop OAuth client JSON, then authorize in your browser.</p><div class="provider-row"><div><strong>Google Classroom</strong><div class="muted">${bootstrap.credentials.classroom ? "Authorized" : "Not enabled"}</div></div><div class="button-row"><button class="button secondary" id="choose-google">Choose OAuth JSON</button><button class="button primary" id="authorize-google">Authorize Google</button>${bootstrap.credentials.classroom ? '<button class="button secondary" id="preview-classroom">Preview Classroom</button><button class="button secondary" id="preview-all">Preview Canvas + Classroom</button><button class="button danger" data-remove-provider="classroom">Remove</button>' : ""}</div></div><div id="google-path" class="muted"></div></div>
     <div class="card"><h2>Desktop data</h2><div class="muted">Configuration: ${escapeHtml(bootstrap.paths.config)}<br>Database: ${escapeHtml(bootstrap.paths.database)}<br>Secrets: ${escapeHtml(bootstrap.paths.secrets)}</div></div>
@@ -440,8 +449,10 @@ function renderSettings(): void {
     next.enrichment.mappingConfidence = Number(main.querySelector<HTMLInputElement>("#mapping-confidence")!.value);
     next.enrichment.allowedLabels = main.querySelector<HTMLInputElement>("#labels")!.value.split(",").map((label) => label.trim()).filter(Boolean);
     next.sync.completedSourceItems = main.querySelector<HTMLSelectElement>("#completed")!.value as "skip" | "include";
+    next.sync.undatedSourceItems = main.querySelector<HTMLSelectElement>("#undated")!.value as "skip" | "include";
+    next.appearance.theme = main.querySelector<HTMLSelectElement>("#theme")!.value as AppConfig["appearance"]["theme"];
     const saved = await runBusy(event.currentTarget as HTMLButtonElement, () => window.taskSync.saveSetup({ config: next }));
-    if (saved) { state.bootstrap = { ...state.bootstrap!, ...saved }; showToast("Settings saved."); }
+    if (saved) { state.bootstrap = { ...state.bootstrap!, ...saved }; applyTheme(next.appearance.theme); showToast("Settings saved."); }
   });
   let googleClientFile: string | undefined;
   main.querySelector("#choose-google")?.addEventListener("click", async () => {

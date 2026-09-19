@@ -94,7 +94,9 @@ export function createSmokeFactories(): ApplicationFactories {
         const excluded = new Set(config.courseMappings
           .filter((mapping) => mapping.sourceType === "canvas" && mapping.connectionId === canvas.connectionId && mapping.courseExternalId && !mapping.enabled)
           .map((mapping) => mapping.courseExternalId));
-        return items.filter((value) => !value.course || !excluded.has(value.course.externalId));
+        return items.filter((value) =>
+          (!value.course || !excluded.has(value.course.externalId))
+          && (config.sync.undatedSourceItems === "include" || Boolean(value.dueAt)));
       },
     }],
     enrichment: () => enrichment(),

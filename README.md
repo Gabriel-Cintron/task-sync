@@ -6,7 +6,7 @@ For the guided application, see the [desktop guide](docs/DESKTOP.md). For termin
 
 ## What is implemented
 
-- A packaged, framework-light Electron UI with guided onboarding, provider diagnostics, Canvas course discovery, Todoist destination mapping, exact-plan review/apply, and recent history.
+- A packaged, framework-light Electron UI with guided onboarding, provider diagnostics, Canvas course filtering, Todoist destination mapping, light/dark themes, exact-plan review/apply, and recent history.
 - A sandboxed renderer with context isolation, narrow Zod-validated IPC, local-only assets, restrictive CSP, denied permissions/navigation/downloads, hardened Electron fuses, and write-only credential fields.
 - Desktop-owned atomic settings/secrets, a validated copy-based CLI importer with backups/rollback, and platform-specific application-data paths.
 - Windows x64 Squirrel, macOS x64/arm64 DMG/ZIP, and Linux x64 DEB/ZIP packaging with unsigned GitHub release artifacts.

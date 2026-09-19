@@ -10,7 +10,11 @@
   },
   "sync": {
     "completedSourceItems": "skip",
+    "undatedSourceItems": "include",
     "missingSourceItems": "retain"
+  },
+  "appearance": {
+    "theme": "system"
   },
   "destinations": {
     "inbox": {},
@@ -25,7 +29,8 @@
       "sourceType": "canvas",
       "connectionId": "school-canvas",
       "courseExternalId": "12345",
-      "destinationKey": "math"
+      "destinationKey": "math",
+      "enabled": true
     },
     {
       "sourceType": "google_classroom",

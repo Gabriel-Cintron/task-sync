@@ -382,7 +382,7 @@ npm run sync -- --source canvas --force-reenrich --apply
 
 Use this after changing model behavior or when you deliberately want a fresh interpretation. Prompt, schema, or configured model version changes already create new cache keys automatically.
 
-## 13. Completion and missing-item behavior
+## 13. Completion, undated-item, and missing-item behavior
 
 The default policy is:
 
@@ -390,16 +390,20 @@ The default policy is:
 {
   "sync": {
     "completedSourceItems": "skip",
+    "undatedSourceItems": "include",
     "missingSourceItems": "retain"
   }
 }
 ```
 
 - Submitted or completed LMS items are skipped.
+- Undated items are included unless `undatedSourceItems` is set to `skip`. In the desktop app, the setup checkbox and Settings control this behavior.
 - An item disappearing from an LMS does not complete or delete its Todoist task.
 - The application never creates speculative study sessions or subtasks.
 
 Set `completedSourceItems` to `include` only if you intentionally want submitted/completed source items considered for synchronization. Automatic Todoist completion is not implemented.
+
+The desktop appearance setting accepts `system`, `light`, or `dark`; `system` follows the operating-system preference.
 
 ## 14. Local state and backups
 
