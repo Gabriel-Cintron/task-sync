@@ -26,6 +26,7 @@ module.exports = {
       platforms: ["linux"],
       config: {
         options: {
+          bin: "task-sync",
           maintainer: "Gabriel Cintron",
           homepage: "https://github.com/Gabriel-Cintron/task-sync",
         },
