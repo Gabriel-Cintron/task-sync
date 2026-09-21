@@ -196,4 +196,4 @@ A future scheduler can invoke the same dry-run/apply CLI, but scheduling is inte
 
 ## License
 
-Copyright © 2026 Gabriel Cintron. All rights reserved. The repository is source-available for viewing and evaluation; it is not currently distributed under an open-source license. See [LICENSE](LICENSE).
+This project is licensed under the [MIT License](LICENSE).

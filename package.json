@@ -4,7 +4,7 @@
   "private": true,
   "main": ".vite/build/main.cjs",
   "author": "Gabriel Cintron",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "description": "LLM-assisted Canvas and Google Classroom obligations sync for Todoist",
   "engines": {
