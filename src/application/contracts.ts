@@ -79,11 +79,11 @@ export type PlanView = {
 export const CourseSummarySchema = z.object({ externalId: z.string().min(1), name: z.string().min(1) }).strict();
 export type CourseSummary = z.infer<typeof CourseSummarySchema>;
 
-export type DestinationProject = { id: string; name: string };
+export type DestinationProject = { id: string; name: string; isInbox?: boolean };
 export type DestinationSection = { id: string; name: string; projectId: string };
 export type DestinationCatalog = { projects: DestinationProject[]; sections: DestinationSection[] };
 export const DestinationCatalogSchema = z.object({
-  projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
+  projects: z.array(z.object({ id: z.string(), name: z.string(), isInbox: z.boolean().optional() }).strict()),
   sections: z.array(z.object({ id: z.string(), name: z.string(), projectId: z.string() }).strict()),
 }).strict();
 

@@ -10,7 +10,7 @@ Download the artifact for your operating system from the repository's GitHub Rel
 - **macOS Intel or Apple silicon:** open the matching DMG or ZIP. Gatekeeper may block the first launch because the app is not notarized. After verifying the download, control-click the app, choose **Open**, and confirm. Do not disable Gatekeeper globally.
 - **Linux x64:** install the DEB with your normal package installer, or extract the ZIP and run `task-sync`. Your desktop environment may ask you to mark the file executable or confirm an untrusted launcher.
 
-The release has no automatic updater. Download a newer artifact manually when a new version is published.
+The release has no automatic updater. Download a newer artifact manually when a new version is published. Each release includes `SHA256SUMS.txt`; verify the downloaded file with `Get-FileHash <file> -Algorithm SHA256` on Windows or `shasum -a 256 <file>` on macOS/Linux before bypassing an operating-system warning.
 
 ## First launch
 
@@ -93,7 +93,7 @@ Desktop files live in Electron's platform-specific application-data directory un
 - `data/task-sync.sqlite`
 - `secrets/`
 
-Provider credentials and OAuth tokens stay in the main process and are never returned to the page UI. Task Sync has no server, background service, scheduler, tray process, telemetry, or automatic synchronization. It runs only while its window is open.
+Provider credentials and OAuth tokens stay in the main process and are never returned to the page UI. They and the SQLite assignment history are local plaintext files protected with owner-only permissions where supported, so use normal account security and full-disk encryption on a shared or portable computer. Task Sync has no server, background service, scheduler, tray process, telemetry, or automatic synchronization. It runs only while its window is open.
 
 Do not casually delete the SQLite database after applying tasks. It contains deterministic mappings used to avoid duplicates. Back it up only while Task Sync is closed.
 

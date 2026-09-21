@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ExternalItem, SyncPlan } from "../core/models.js";
@@ -22,6 +22,9 @@ export class SqliteSyncRepository implements SyncRepository {
     this.db = new DatabaseSync(resolved);
     this.db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     this.migrate();
+    if (resolved !== ":memory:") {
+      try { chmodSync(resolved, 0o600); } catch { /* Best effort on platforms without POSIX modes. */ }
+    }
   }
 
   private migrate(): void {

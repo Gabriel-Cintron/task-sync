@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 
@@ -74,5 +74,6 @@ export function saveConfig(path: string, value: unknown): AppConfig {
   const temporary = `${target}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(parsed, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   renameSync(temporary, target);
+  try { chmodSync(target, 0o600); } catch { /* Best effort on platforms without POSIX modes. */ }
   return parsed;
 }

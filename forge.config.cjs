@@ -22,11 +22,6 @@ module.exports = {
       },
     },
     {
-      name: "@electron-forge/maker-dmg",
-      platforms: ["darwin"],
-      config: { name: "Task Sync" },
-    },
-    {
       name: "@electron-forge/maker-deb",
       platforms: ["linux"],
       config: {

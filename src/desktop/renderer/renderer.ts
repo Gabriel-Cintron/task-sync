@@ -268,9 +268,10 @@ async function renderMappingSetup(): Promise<void> {
   }
   const projects = state.destinations?.projects ?? [];
   const sections = state.destinations?.sections ?? [];
+  const inboxProject = projects.find((project) => project.isInbox);
   const choices: Array<{ label: string; projectId?: string; sectionId?: string }> = [
-    { label: "Todoist Inbox" },
-    ...projects.map((project) => ({ label: project.name, projectId: project.id })),
+    { label: "Todoist Inbox", ...(inboxProject ? { projectId: inboxProject.id } : {}) },
+    ...projects.filter((project) => !project.isInbox).map((project) => ({ label: project.name, projectId: project.id })),
     ...sections.map((section) => ({ label: `${projects.find((project) => project.id === section.projectId)?.name ?? "Project"} › ${section.name}`, projectId: section.projectId, sectionId: section.id })),
   ];
   const rows = state.courses.map((course) => {
@@ -296,7 +297,7 @@ async function renderMappingSetup(): Promise<void> {
   main.querySelector("#back")?.addEventListener("click", () => { state.setupStep = 2; renderSetup(); });
   main.querySelector<HTMLButtonElement>("#save-mappings")?.addEventListener("click", async (event) => {
     const config = structuredClone(state.bootstrap!.config);
-    const destinations: AppConfig["destinations"] = { inbox: {} };
+    const destinations: AppConfig["destinations"] = { inbox: inboxProject ? { projectId: inboxProject.id } : {} };
     const mappings: AppConfig["courseMappings"] = [];
     main.querySelectorAll<HTMLElement>("[data-mapping-row]").forEach((row) => {
       const select = row.querySelector<HTMLSelectElement>("[data-course-id]")!;
@@ -304,8 +305,8 @@ async function renderMappingSetup(): Promise<void> {
       const choice = choices[Number(select.value)] ?? choices[0]!;
       const projectId = choice.projectId;
       const sectionId = choice.sectionId;
-      const key = sectionId ? `section_${sectionId.replace(/[^a-zA-Z0-9_-]/g, "_")}` : projectId ? `project_${projectId.replace(/[^a-zA-Z0-9_-]/g, "_")}` : "inbox";
-      if (projectId) destinations[key] = { projectId, ...(sectionId ? { sectionId } : {}) };
+      const key = choice === choices[0] ? "inbox" : sectionId ? `section_${sectionId.replace(/[^a-zA-Z0-9_-]/g, "_")}` : projectId ? `project_${projectId.replace(/[^a-zA-Z0-9_-]/g, "_")}` : "inbox";
+      if (projectId && key !== "inbox") destinations[key] = { projectId, ...(sectionId ? { sectionId } : {}) };
       mappings.push({ sourceType: "canvas", connectionId: config.sources.canvas.connectionId, courseExternalId: select.dataset.courseId!, destinationKey: key, enabled });
     });
     config.destinations = destinations; config.courseMappings = mappings; config.defaultDestinationKey = "inbox";
@@ -381,7 +382,10 @@ function renderPlan(): void {
   </section>`;
   main.querySelector("#back-dashboard")?.addEventListener("click", () => route("dashboard"));
   main.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((button) => button.addEventListener("click", () => { state.planFilter = button.dataset.filter as typeof state.planFilter; renderPlan(); }));
-  main.querySelectorAll<HTMLButtonElement>("[data-source-url]").forEach((button) => button.addEventListener("click", () => void window.taskSync.openExternal(button.dataset.sourceUrl!)));
+  main.querySelectorAll<HTMLButtonElement>("[data-source-url]").forEach((button) => button.addEventListener("click", async () => {
+    try { await window.taskSync.openExternal(button.dataset.sourceUrl!); }
+    catch (error) { showToast(errorMessage(error), true); }
+  }));
   main.querySelector<HTMLButtonElement>("#apply-plan")?.addEventListener("click", async (event) => {
     if (!window.confirm(`Apply ${(state.plan!.counts.create ?? 0) + (state.plan!.counts.update ?? 0)} safe changes? ${excluded} conflict/error rows will be excluded.`)) return;
     const result = await runBusy(event.currentTarget as HTMLButtonElement, () => window.taskSync.applyPlan({ planId: state.plan!.plan.id, digest: state.plan!.digest }));
@@ -439,7 +443,8 @@ function renderSettings(): void {
   main.querySelectorAll<HTMLButtonElement>("[data-remove-provider]").forEach((button) => button.addEventListener("click", async () => {
     const provider = button.dataset.removeProvider as Provider;
     if (!window.confirm(`Remove the saved ${providerNames[provider]} credential?`)) return;
-    state.bootstrap = { ...state.bootstrap!, ...await window.taskSync.removeCredential(provider) }; renderSettings(); showToast(`${providerNames[provider]} removed.`);
+    const saved = await runBusy(button, () => window.taskSync.removeCredential(provider));
+    if (saved) { state.bootstrap = { ...state.bootstrap!, ...saved }; renderSettings(); showToast(`${providerNames[provider]} removed.`); }
   }));
   main.querySelector<HTMLButtonElement>("#save-settings")?.addEventListener("click", async (event) => {
     const next = structuredClone(config);
@@ -455,10 +460,13 @@ function renderSettings(): void {
     if (saved) { state.bootstrap = { ...state.bootstrap!, ...saved }; applyTheme(next.appearance.theme); showToast("Settings saved."); }
   });
   let googleClientFile: string | undefined;
-  main.querySelector("#choose-google")?.addEventListener("click", async () => {
-    googleClientFile = await window.taskSync.chooseFile("google-client");
+  main.querySelector<HTMLButtonElement>("#choose-google")?.addEventListener("click", async (event) => {
+    googleClientFile = await runBusy(event.currentTarget as HTMLButtonElement, () => window.taskSync.chooseFile("google-client"));
     const label = main.querySelector<HTMLElement>("#google-path")!; label.textContent = googleClientFile ?? "No file selected";
-    if (googleClientFile) { await window.taskSync.importExistingSetup({ googleClientFile }); showToast("OAuth client copied. You can authorize now."); }
+    if (googleClientFile) {
+      const imported = await runBusy(null, () => window.taskSync.importExistingSetup({ googleClientFile }));
+      if (imported) showToast("OAuth client copied. You can authorize now.");
+    }
   });
   main.querySelector<HTMLButtonElement>("#authorize-google")?.addEventListener("click", async (event) => {
     const saved = await runBusy(event.currentTarget as HTMLButtonElement, () => window.taskSync.authorizeClassroom());

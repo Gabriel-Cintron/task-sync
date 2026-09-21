@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { TaskSyncApplication, type ApplicationFactories } from "../../src/application/task-sync-application.js";
 import { desktopPaths, SettingsStore } from "../../src/application/settings-store.js";
@@ -88,7 +89,26 @@ describe("shared application service", () => {
     const view = await application.createPlan({ source: "canvas", forceReenrich: false });
     const changed = store.config(); changed.enrichment.mappingConfidence = 0.55;
     await application.saveSetup({ config: changed });
-    await expect(application.applyPlan({ planId: view.plan.id, digest: view.digest })).rejects.toThrow("Settings changed");
+    await expect(application.applyPlan({ planId: view.plan.id, digest: view.digest })).rejects.toThrow("Settings or provider accounts changed");
+  });
+
+  it("invalidates a plan when the Todoist account credential changes", async () => {
+    const { application } = fixture();
+    const view = await application.createPlan({ source: "canvas", forceReenrich: false });
+    await application.saveSetup({ credentials: { todoistApiToken: "a-different-account" } });
+    await expect(application.applyPlan({ planId: view.plan.id, digest: view.digest })).rejects.toThrow("provider accounts changed");
+  });
+
+  it("detects saved-plan database tampering before any write", async () => {
+    const { application, store, todoist } = fixture();
+    const view = await application.createPlan({ source: "canvas", forceReenrich: false });
+    const database = new DatabaseSync(store.paths.database);
+    const changed = structuredClone(view.plan);
+    changed.actions[0]!.reason = "tampered";
+    database.prepare("UPDATE sync_plans SET plan_json = ? WHERE id = ?").run(JSON.stringify(changed), view.plan.id);
+    database.close();
+    await expect(application.applyPlan({ planId: view.plan.id, digest: view.digest })).rejects.toThrow("saved plan changed");
+    expect(todoist.creates).toBe(0);
   });
 
   it("discovers courses and destinations through provider adapters", async () => {

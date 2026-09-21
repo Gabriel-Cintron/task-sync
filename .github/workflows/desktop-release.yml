@@ -10,12 +10,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
@@ -24,7 +30,12 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --audit-level=high
+      - name: Verify release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e "const p=require('./package.json'); if (process.env.RELEASE_TAG !== 'v'+p.version) throw new Error('Release tag must be v'+p.version)"
 
   package:
     needs: verify
@@ -46,8 +57,10 @@ jobs:
             artifact: task-sync-linux-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
@@ -59,7 +72,9 @@ jobs:
       - if: runner.os != 'Linux'
         run: npm run test:e2e
       - run: npm run make:desktop -- --arch=${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - if: runner.os == 'macOS'
+        run: npm run make:dmg -- ${{ matrix.arch }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           path: desktop-out/make/**/*
@@ -72,9 +87,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-artifacts
+      - name: Generate SHA-256 checksums
+        run: |
+          while IFS= read -r -d '' file; do
+            checksum=$(sha256sum "$file")
+            printf '%s  %s\n' "${checksum%% *}" "$(basename "$file")"
+          done < <(find release-artifacts -type f -print0 | sort -z) > release-artifacts/SHA256SUMS.txt
       - name: Create release and upload unsigned installers
         env:
           GH_TOKEN: ${{ github.token }}

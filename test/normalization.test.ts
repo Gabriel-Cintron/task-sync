@@ -37,6 +37,7 @@ describe("provider normalization and stable identity", () => {
       { courseWorkId: "work-2", state: "TURNED_IN" },
       "school-google",
     );
+    expect(item.ref.externalId).toBe("course-1:work-2");
     expect(item.dueAt).toBe("2026-10-04T17:30:00.000Z");
     expect(item.status).toBe("submitted");
   });

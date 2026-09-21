@@ -1,4 +1,5 @@
 import { AppConfigSchema, type AppConfig } from "../config.js";
+import { readFileSync } from "node:fs";
 import { CanvasAdapter } from "../adapters/canvas.js";
 import type { ApplyResult, ExternalItem, TaskEnrichment } from "../core/models.js";
 import type { DiagnosticReport, EnrichmentService, SourceAdapter, SyncRepository, TodoistDestination } from "../core/ports.js";
@@ -36,7 +37,7 @@ import type { SettingsStore } from "./settings-store.js";
 
 type DiscoverableCanvas = SourceAdapter & { listCourses(options?: { signal?: AbortSignal }): Promise<CourseSummary[]> };
 type DiscoverableTodoist = TodoistDestination & { listDestinations(options?: { signal?: AbortSignal }): Promise<DestinationCatalog> };
-type AuthorizableClassroom = SourceAdapter & { authorize(options?: { onAuthorizationUrl?: (url: string) => void }): Promise<void> };
+type AuthorizableClassroom = SourceAdapter & { authorize(options?: { onAuthorizationUrl?: (url: string) => void | Promise<void> }): Promise<void> };
 
 export type ApplicationFactories = {
   repository(path: string): SyncRepository;
@@ -68,6 +69,19 @@ function counts(actions: Array<{ kind: string }>): Record<string, number> {
     result[action.kind] = (result[action.kind] ?? 0) + 1;
     return result;
   }, {});
+}
+
+function secretFingerprint(value: string | undefined): string | null {
+  return value ? sha256(value) : null;
+}
+
+function fileFingerprint(path: string | undefined): string | null {
+  if (!path) return null;
+  try {
+    return sha256(readFileSync(path, "utf8"));
+  } catch {
+    return `unreadable:${sha256(path)}`;
+  }
 }
 
 export class TaskSyncApplication {
@@ -174,7 +188,7 @@ export class TaskSyncApplication {
         repository.savePlan(plan, {
           digest,
           expiresAt,
-          configFingerprint: this.configFingerprint(config),
+          configFingerprint: this.configFingerprint(config, environment),
           applyStatus: "planned",
           origin: this.origin,
         });
@@ -196,13 +210,14 @@ export class TaskSyncApplication {
       const record = repository.getPlanRecord(parsed.planId);
       if (!record) throw new Error("The selected plan no longer exists");
       if (record.digest !== parsed.digest) throw new Error("The plan digest does not match the reviewed plan");
-      if (record.configFingerprint !== this.configFingerprint(this.settings.config())) throw new Error("Settings changed after preview; create a new plan");
+      if (sha256(stableJson(record.plan)) !== record.digest) throw new Error("The saved plan changed after preview; create a new plan");
+      const config = this.settings.config();
+      const environment = this.settings.environment();
+      if (record.configFingerprint !== this.configFingerprint(config, environment)) throw new Error("Settings or provider accounts changed after preview; create a new plan");
       if (record.applyStatus !== "planned") throw new Error(`This plan cannot be applied because its status is ${record.applyStatus}`);
       if (new Date(record.expiresAt).getTime() <= Date.now()) throw new Error("This plan expired; create a new preview");
       if (!repository.claimPlanForApply(parsed.planId, parsed.digest, new Date().toISOString())) throw new Error("This plan was already claimed or expired");
 
-      const config = this.settings.config();
-      const environment = this.settings.environment();
       const engine = new SyncEngine(
         repository,
         this.factories.enrichment(config, repository, environment),
@@ -230,15 +245,25 @@ export class TaskSyncApplication {
     return run ? Promise.resolve(run) : Promise.reject(new Error("Run not found"));
   }
 
-  public async authorizeClassroom(openAuthorizationUrl: (url: string) => void): Promise<SetupStatus> {
+  public async authorizeClassroom(openAuthorizationUrl: (url: string) => void | Promise<void>): Promise<SetupStatus> {
     return this.mutex.run("authorize Google Classroom", async () => {
       await this.factories.classroom(this.settings.config(), this.settings.environment()).authorize({ onAuthorizationUrl: openAuthorizationUrl });
       return this.settings.status();
     });
   }
 
-  private configFingerprint(config: AppConfig): string {
-    return sha256(stableJson(AppConfigSchema.parse(config)));
+  private configFingerprint(config: AppConfig, environment: RuntimeEnvironment): string {
+    return sha256(stableJson({
+      config: AppConfigSchema.parse(config),
+      providers: {
+        canvasBaseUrl: environment.CANVAS_BASE_URL ?? null,
+        canvasCredential: secretFingerprint(environment.CANVAS_ACCESS_TOKEN),
+        todoistCredential: secretFingerprint(environment.TODOIST_API_TOKEN),
+        openaiCredential: secretFingerprint(environment.OPENAI_API_KEY),
+        googleClient: fileFingerprint(environment.GOOGLE_CLIENT_SECRET_FILE),
+        googleToken: fileFingerprint(environment.GOOGLE_TOKEN_FILE),
+      },
+    }));
   }
 
   private withRepository<T>(operation: (repository: SyncRepository) => T): T;

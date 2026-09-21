@@ -11,6 +11,15 @@ import type {
 import type { EnrichmentService, SourceAdapter, SyncRepository, TodoistDestination } from "../core/ports.js";
 import { buildCandidate, stableMarker } from "./policy.js";
 
+function recoveryMarkers(item: Parameters<typeof stableMarker>[0]): string[] {
+  const markers = [stableMarker(item)];
+  const legacyExternalId = item.providerMetadata?.legacyExternalId;
+  if (item.ref.sourceType === "google_classroom" && typeof legacyExternalId === "string" && legacyExternalId) {
+    markers.push(stableMarker({ ...item, ref: { ...item.ref, externalId: legacyExternalId } }));
+  }
+  return markers;
+}
+
 function summary(outcomes: Array<{ outcome: string }>): Record<string, number> {
   return outcomes.reduce<Record<string, number>>((counts, value) => {
     counts[value.outcome] = (counts[value.outcome] ?? 0) + 1;
@@ -100,7 +109,12 @@ export class SyncEngine {
             continue;
           }
 
-          const recovered = await this.todoist.findByStableMarker(stableMarker(item), options.signal ? { signal: options.signal } : {});
+          const recoveredById = new Map<string, Awaited<ReturnType<TodoistDestination["findByStableMarker"]>>[number]>();
+          for (const marker of recoveryMarkers(item)) {
+            const matches = await this.todoist.findByStableMarker(marker, options.signal ? { signal: options.signal } : {});
+            for (const match of matches) recoveredById.set(match.id, match);
+          }
+          const recovered = [...recoveredById.values()];
           if (recovered.length > 1) {
             actions.push({ kind: "conflict", sourceKey: key, candidate, reason: `${recovered.length} Todoist tasks contain the stable marker`, destinationFingerprint: fingerprint });
           } else if (recovered[0]) {

@@ -45,6 +45,12 @@ export function candidateToTodoistInput(candidate: TaskCandidate): TodoistTaskIn
   };
 }
 
+function canonicalDeadline(deadlineAt: string | undefined, precision: "date" | "datetime" | undefined): string | null {
+  if (!deadlineAt) return null;
+  if (precision === "date") return deadlineAt.slice(0, 10);
+  return new Date(deadlineAt).toISOString();
+}
+
 export function destinationFingerprint(candidate: TaskCandidate): string {
   const input = candidateToTodoistInput(candidate);
   return sha256(stableJson({
@@ -53,7 +59,8 @@ export function destinationFingerprint(candidate: TaskCandidate): string {
     projectId: input.projectId ?? null,
     sectionId: input.sectionId ?? null,
     labels: input.labels,
-    deadlineAt: input.deadlineAt?.slice(0, 10) ?? null,
+    deadlineAt: canonicalDeadline(input.deadlineAt, input.deadlinePrecision),
+    deadlinePrecision: input.deadlinePrecision ?? null,
     dateKind: input.dateKind ?? null,
   }));
 }
@@ -65,7 +72,8 @@ export function todoistTaskFingerprint(task: TodoistTask): string {
     projectId: task.projectId ?? null,
     sectionId: task.sectionId ?? null,
     labels: task.labels,
-    deadlineAt: task.deadlineAt?.slice(0, 10) ?? null,
+    deadlineAt: canonicalDeadline(task.deadlineAt, task.deadlinePrecision),
+    deadlinePrecision: task.deadlinePrecision ?? null,
     dateKind: task.dateKind ?? null,
   }));
 }

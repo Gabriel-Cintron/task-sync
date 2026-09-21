@@ -65,7 +65,7 @@ function printSync(plan: SyncPlan, applied: ApplyResult | undefined, json: boole
 }
 
 const program = new Command();
-program.name("task-sync").description("Safely sync school obligations to Todoist").version("0.1.4");
+program.name("task-sync").description("Safely sync school obligations to Todoist").version("0.1.5");
 
 program.command("sync")
   .description("Plan a sync; only write to Todoist with --apply")
@@ -129,7 +129,7 @@ program.command("auth")
   .argument("<provider>", "provider name")
   .action(async (provider: string) => {
     if (provider !== "classroom") throw new Error("Only 'classroom' supports an interactive authorization command");
-    await createCliApplication().authorizeClassroom((url) => process.stdout.write(`Open this URL in a browser:\n${url}\n`));
+    await createCliApplication().authorizeClassroom((url) => { process.stdout.write(`Open this URL in a browser:\n${url}\n`); });
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

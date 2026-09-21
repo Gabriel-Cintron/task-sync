@@ -1,7 +1,10 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, extname, join, resolve } from "node:path";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { DatabaseSync, backup } from "node:sqlite";
 import { parse } from "dotenv";
+import { z } from "zod";
 import { AppConfigSchema, loadConfig, saveConfig, type AppConfig } from "../config.js";
+import { SqliteSyncRepository } from "../persistence/sqlite-repository.js";
 import { AppPathsSchema, ImportRequestSchema, SetupInputSchema, type AppPaths, type CredentialStatus, type ImportRequest, type ImportResult, type SetupInput, type SetupStatus } from "./contracts.js";
 
 const ENV_KEYS = {
@@ -14,10 +17,27 @@ const ENV_KEYS = {
 } as const;
 
 function quoteEnv(value: string): string {
-  return JSON.stringify(value);
+  return `"${value.replaceAll('"', '\\"').replaceAll("\r", "").replaceAll("\n", "\\n")}"`;
 }
 
 type FileMutation = { destination: string; backup?: string };
+
+const GoogleClientSchema = z.object({
+  installed: z.object({
+    client_id: z.string().min(1),
+    client_secret: z.string().min(1),
+    redirect_uris: z.array(z.string().url()).min(1),
+  }).passthrough(),
+}).passthrough();
+
+const GoogleTokenSchema = z.object({
+  access_token: z.string().min(1).optional(),
+  refresh_token: z.string().min(1).optional(),
+}).passthrough().refine((value) => Boolean(value.access_token || value.refresh_token), "Google OAuth token must contain an access or refresh token");
+
+function safeChmod(path: string, mode: number): void {
+  try { chmodSync(path, mode); } catch { /* Windows ACLs do not always expose POSIX modes. */ }
+}
 
 function assertFile(path: string): string {
   const resolved = resolve(path);
@@ -28,17 +48,34 @@ function assertFile(path: string): string {
 function atomicCopy(source: string, destination: string, backups: string[], mutations: FileMutation[]): void {
   const resolved = resolve(source);
   assertFile(resolved);
+  if (resolved === resolve(destination)) return;
   mkdirSync(dirname(destination), { recursive: true });
   let backup: string | undefined;
   if (existsSync(destination)) {
     backup = `${destination}.${Date.now()}.bak`;
     copyFileSync(destination, backup);
+    safeChmod(backup, 0o600);
     backups.push(backup);
   }
   const temporary = `${destination}.${process.pid}.tmp`;
   copyFileSync(resolved, temporary);
   renameSync(temporary, destination);
+  safeChmod(destination, 0o600);
   mutations.push({ destination, ...(backup ? { backup } : {}) });
+}
+
+function activatePreparedFile(prepared: string, destination: string, backups: string[], mutations: FileMutation[]): void {
+  let existingBackup: string | undefined;
+  if (existsSync(destination)) {
+    existingBackup = `${destination}.${Date.now()}.bak`;
+    copyFileSync(destination, existingBackup);
+    safeChmod(existingBackup, 0o600);
+    backups.push(existingBackup);
+  }
+  mutations.push({ destination, ...(existingBackup ? { backup: existingBackup } : {}) });
+  if (existsSync(destination)) unlinkSync(destination);
+  renameSync(prepared, destination);
+  safeChmod(destination, 0o600);
 }
 
 function rollback(mutations: FileMutation[]): void {
@@ -53,9 +90,12 @@ export class SettingsStore {
 
   public constructor(paths: AppPaths) {
     this.paths = AppPathsSchema.parse(paths);
-    mkdirSync(this.paths.root, { recursive: true });
-    mkdirSync(dirname(this.paths.database), { recursive: true });
-    mkdirSync(this.paths.secrets, { recursive: true });
+    mkdirSync(this.paths.root, { recursive: true, mode: 0o700 });
+    mkdirSync(dirname(this.paths.database), { recursive: true, mode: 0o700 });
+    mkdirSync(this.paths.secrets, { recursive: true, mode: 0o700 });
+    safeChmod(this.paths.root, 0o700);
+    safeChmod(dirname(this.paths.database), 0o700);
+    safeChmod(this.paths.secrets, 0o700);
   }
 
   public environment(): Record<string, string | undefined> {
@@ -98,11 +138,26 @@ export class SettingsStore {
         : provider === "openai" ? ["OPENAI_API_KEY"]
           : ["GOOGLE_CLIENT_SECRET_FILE", "GOOGLE_TOKEN_FILE"];
     for (const key of keys) delete env[key];
+    const envBackupPrefix = `${this.paths.env.split(/[\\/]/).pop()}.`;
+    for (const name of readdirSync(dirname(this.paths.env))) {
+      if (!name.startsWith(envBackupPrefix) || !name.endsWith(".bak")) continue;
+      const backupPath = join(dirname(this.paths.env), name);
+      const backupEnvironment = parse(readFileSync(backupPath));
+      for (const key of keys) delete backupEnvironment[key];
+      this.writeEnvironmentFile(backupPath, backupEnvironment);
+    }
+    if (provider === "classroom") {
+      for (const name of readdirSync(this.paths.secrets)) {
+        if (!name.startsWith("google-oauth-client.json") && !name.startsWith("google-oauth-token.json")) continue;
+        const file = join(this.paths.secrets, name);
+        if (statSync(file).isFile()) unlinkSync(file);
+      }
+    }
     this.writeEnvironment(env);
     return this.status();
   }
 
-  public importExisting(request: ImportRequest): ImportResult {
+  public async importExisting(request: ImportRequest): Promise<ImportResult> {
     const parsed = ImportRequestSchema.parse(request);
     const imported: string[] = [];
     const backups: string[] = [];
@@ -111,49 +166,76 @@ export class SettingsStore {
     // Validate every selected input before changing desktop-owned state.
     const importedEnvironment = parsed.envFile ? parse(readFileSync(assertFile(parsed.envFile))) : undefined;
     if (parsed.configFile) AppConfigSchema.parse(JSON.parse(readFileSync(assertFile(parsed.configFile), "utf8")) as unknown);
+    let preparedDatabase: string | undefined;
     if (parsed.databaseFile) {
-      assertFile(parsed.databaseFile);
+      const source = assertFile(parsed.databaseFile);
       if (![".sqlite", ".db"].includes(extname(parsed.databaseFile).toLowerCase())) throw new Error("Imported database must be a .sqlite or .db file");
-      const header = readFileSync(resolve(parsed.databaseFile)).subarray(0, 16).toString("utf8");
-      if (header !== "SQLite format 3\u0000") throw new Error("Imported database is not a valid SQLite file");
+      preparedDatabase = `${this.paths.database}.${process.pid}.import`;
+      if (existsSync(preparedDatabase)) unlinkSync(preparedDatabase);
+      try {
+        const sourceDatabase = new DatabaseSync(source, { readOnly: true, timeout: 5000 });
+        try {
+          const quickCheck = sourceDatabase.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>;
+          if (quickCheck.length !== 1 || !Object.values(quickCheck[0] ?? {}).includes("ok")) throw new Error("Imported database failed SQLite integrity validation");
+          const foreignKeyProblems = sourceDatabase.prepare("PRAGMA foreign_key_check").all();
+          if (foreignKeyProblems.length) throw new Error("Imported database has invalid foreign-key references");
+          await backup(sourceDatabase, preparedDatabase);
+        } finally {
+          sourceDatabase.close();
+        }
+        const repository = new SqliteSyncRepository(preparedDatabase);
+        repository.close();
+      } catch (error) {
+        if (existsSync(preparedDatabase)) unlinkSync(preparedDatabase);
+        throw error;
+      }
     }
-    if (parsed.googleClientFile) {
-      const google = JSON.parse(readFileSync(assertFile(parsed.googleClientFile), "utf8")) as { installed?: unknown };
-      if (!google.installed || typeof google.installed !== "object") throw new Error("Google OAuth JSON must contain an installed desktop client");
+    const importedPath = (value: string | undefined): string | undefined => value
+      ? assertFile(isAbsolute(value) || !parsed.envFile ? value : resolve(dirname(parsed.envFile), value))
+      : undefined;
+    const googleClientSource = importedPath(parsed.googleClientFile ?? importedEnvironment?.GOOGLE_CLIENT_SECRET_FILE);
+    const googleTokenSource = importedPath(parsed.googleTokenFile ?? importedEnvironment?.GOOGLE_TOKEN_FILE);
+    try {
+      if (googleClientSource) GoogleClientSchema.parse(JSON.parse(readFileSync(googleClientSource, "utf8")) as unknown);
+      if (googleTokenSource) GoogleTokenSchema.parse(JSON.parse(readFileSync(googleTokenSource, "utf8")) as unknown);
+    } catch (error) {
+      if (preparedDatabase && existsSync(preparedDatabase)) unlinkSync(preparedDatabase);
+      throw error;
     }
-    if (parsed.googleTokenFile) JSON.parse(readFileSync(assertFile(parsed.googleTokenFile), "utf8")) as unknown;
 
     try {
       if (parsed.configFile) {
         atomicCopy(parsed.configFile, this.paths.config, backups, mutations);
         imported.push("configuration");
       }
-      if (parsed.databaseFile) {
-        atomicCopy(parsed.databaseFile, this.paths.database, backups, mutations);
+      if (preparedDatabase) {
+        activatePreparedFile(preparedDatabase, this.paths.database, backups, mutations);
+        preparedDatabase = undefined;
         imported.push("database");
       }
       const environment = { ...this.fileEnvironment(), ...importedEnvironment };
-      if (parsed.googleClientFile) {
+      delete environment.GOOGLE_CLIENT_SECRET_FILE;
+      delete environment.GOOGLE_TOKEN_FILE;
+      if (googleClientSource) {
         const destination = join(this.paths.secrets, "google-oauth-client.json");
-        atomicCopy(parsed.googleClientFile, destination, backups, mutations);
-        chmodSync(destination, 0o600);
+        atomicCopy(googleClientSource, destination, backups, mutations);
         environment.GOOGLE_CLIENT_SECRET_FILE = destination;
         environment.GOOGLE_TOKEN_FILE = join(this.paths.secrets, "google-oauth-token.json");
         imported.push("google-client");
       }
-      if (parsed.googleTokenFile) {
+      if (googleTokenSource) {
         const destination = join(this.paths.secrets, "google-oauth-token.json");
-        atomicCopy(parsed.googleTokenFile, destination, backups, mutations);
-        chmodSync(destination, 0o600);
+        atomicCopy(googleTokenSource, destination, backups, mutations);
         environment.GOOGLE_TOKEN_FILE = destination;
         imported.push("google-token");
       }
-      if (parsed.envFile || parsed.googleClientFile || parsed.googleTokenFile) {
+      if (parsed.envFile || googleClientSource || googleTokenSource) {
         this.writeEnvironment(environment, backups, mutations);
         if (parsed.envFile) imported.unshift("environment");
       }
       return { imported, backups };
     } catch (error) {
+      if (preparedDatabase && existsSync(preparedDatabase)) unlinkSync(preparedDatabase);
       rollback(mutations);
       throw error;
     }
@@ -173,23 +255,28 @@ export class SettingsStore {
   }
 
   private writeEnvironment(values: Record<string, string | undefined>, backups: string[] = [], mutations?: FileMutation[]): void {
+    if (mutations && existsSync(this.paths.env)) {
+      const backup = `${this.paths.env}.${Date.now()}.bak`;
+      copyFileSync(this.paths.env, backup);
+      safeChmod(backup, 0o600);
+      backups.push(backup);
+      mutations.push({ destination: this.paths.env, backup });
+    }
+    this.writeEnvironmentFile(this.paths.env, values);
+    if (mutations && !mutations.some((mutation) => mutation.destination === this.paths.env)) mutations.push({ destination: this.paths.env });
+  }
+
+  private writeEnvironmentFile(path: string, values: Record<string, string | undefined>): void {
     const managed = new Set<string>(Object.values(ENV_KEYS));
     const lines = Object.keys(values)
       .filter((key) => managed.has(key) && values[key])
       .sort()
       .map((key) => `${key}=${quoteEnv(values[key]!)}`);
-    mkdirSync(dirname(this.paths.env), { recursive: true });
-    let backup: string | undefined;
-    if (mutations && existsSync(this.paths.env)) {
-      backup = `${this.paths.env}.${Date.now()}.bak`;
-      copyFileSync(this.paths.env, backup);
-      backups.push(backup);
-    }
-    const temporary = `${this.paths.env}.${process.pid}.tmp`;
+    mkdirSync(dirname(path), { recursive: true });
+    const temporary = `${path}.${process.pid}.tmp`;
     writeFileSync(temporary, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
-    renameSync(temporary, this.paths.env);
-    chmodSync(this.paths.env, 0o600);
-    if (mutations) mutations.push({ destination: this.paths.env, ...(backup ? { backup } : {}) });
+    renameSync(temporary, path);
+    safeChmod(path, 0o600);
   }
 }
 

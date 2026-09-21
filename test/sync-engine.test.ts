@@ -90,6 +90,21 @@ describe("sync engine end to end with fakes", () => {
     secondRepository.close();
   });
 
+  it("recovers Classroom tasks created with the legacy course-work-only marker", async () => {
+    const repository = new SqliteSyncRepository(":memory:");
+    const todoist = new FakeTodoist();
+    const classroomItem = item({
+      ref: { sourceType: "google_classroom", connectionId: "school-google", externalId: "course-1:work-2" },
+      providerMetadata: { legacyExternalId: "work-2" },
+    });
+    const legacyMarker = stableMarker({ ...classroomItem, ref: { ...classroomItem.ref, externalId: "work-2" } });
+    todoist.tasks.set("legacy", { id: "legacy", content: "Existing", description: `<!-- ${legacyMarker} -->`, labels: [] });
+    const engine = new SyncEngine(repository, new CachedEnrichmentService(repository, { generate: async () => enrichment }, testConfig()), todoist, testConfig());
+    const plan = await engine.plan([new FakeSource([classroomItem])]);
+    expect(plan.actions[0]).toMatchObject({ kind: "update", todoistTaskId: "legacy" });
+    repository.close();
+  });
+
   it("skips completed items and never deletes tasks for missing items", async () => {
     const repository = new SqliteSyncRepository(":memory:");
     const todoist = new FakeTodoist();

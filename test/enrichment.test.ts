@@ -37,6 +37,16 @@ describe("enrichment", () => {
     repository.close();
   });
 
+  it("does not reuse enrichment when its allowlists change", async () => {
+    const repository = new SqliteSyncRepository(":memory:");
+    const generate = vi.fn(async () => valid);
+    await new CachedEnrichmentService(repository, { generate }, testConfig()).enrich(messyAssignmentFixture);
+    const changed = testConfig({ enrichment: { ...testConfig().enrichment, allowedLabels: ["school", "science"] } });
+    await new CachedEnrichmentService(repository, { generate }, changed).enrich(messyAssignmentFixture);
+    expect(generate).toHaveBeenCalledTimes(2);
+    repository.close();
+  });
+
   it("falls back safely on refusal, timeout, or invalid output", async () => {
     const repository = new SqliteSyncRepository(":memory:");
     const generator: EnrichmentGenerator = { generate: async () => { throw new Error("request timed out"); } };

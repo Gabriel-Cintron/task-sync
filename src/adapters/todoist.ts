@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { classifyHttpFailure } from "../core/errors.js";
 import { DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "../core/fetch-with-timeout.js";
 import type { DiagnosticReport, TodoistDestination } from "../core/ports.js";
@@ -26,18 +27,21 @@ const NamedResourcePageSchema = z.object({
     id: z.string(),
     name: z.string(),
     project_id: z.string().optional(),
+    inbox_project: z.boolean().optional(),
   }).passthrough()),
   next_cursor: z.string().nullish(),
 }).passthrough();
 
-function normalize(raw: z.infer<typeof TodoistTaskSchema>): TodoistTask {
+type NamedResource = z.infer<typeof NamedResourcePageSchema>["results"][number];
+
+function normalize(raw: z.infer<typeof TodoistTaskSchema>, inboxProjectId?: string): TodoistTask {
   const dueAt = raw.due?.datetime ?? (raw.due?.date ? `${raw.due.date}T23:59:59.000Z` : undefined);
   const deadlineAt = dueAt ?? (raw.deadline?.date ? `${raw.deadline.date}T23:59:59.000Z` : undefined);
   return {
     id: raw.id,
     content: raw.content,
     description: raw.description,
-    ...(raw.project_id ? { projectId: raw.project_id } : {}),
+    ...(raw.project_id && raw.project_id !== inboxProjectId ? { projectId: raw.project_id } : {}),
     ...(raw.section_id ? { sectionId: raw.section_id } : {}),
     labels: raw.labels,
     ...(deadlineAt ? {
@@ -48,8 +52,14 @@ function normalize(raw: z.infer<typeof TodoistTaskSchema>): TodoistTask {
   };
 }
 
+function derivedRequestId(requestId: string, operation: string): string {
+  const hex = createHash("sha256").update(`${requestId}:${operation}`).digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export class TodoistAdapter implements TodoistDestination {
   private taskCatalog: Promise<TodoistTask[]> | undefined;
+  private projectCatalog: Promise<NamedResource[]> | undefined;
 
   public constructor(
     private readonly token: string,
@@ -61,7 +71,7 @@ export class TodoistAdapter implements TodoistDestination {
   public async getTask(id: string, options: { signal?: AbortSignal } = {}): Promise<TodoistTask | undefined> {
     const response = await this.request(`/tasks/${encodeURIComponent(id)}`, { method: "GET", ...options }, true);
     if (!response) return undefined;
-    return normalize(TodoistTaskSchema.parse(await response.json()));
+    return normalize(TodoistTaskSchema.parse(await response.json()), await this.inboxProjectId(options));
   }
 
   public async findByStableMarker(marker: string, options: { signal?: AbortSignal } = {}): Promise<TodoistTask[]> {
@@ -84,7 +94,7 @@ export class TodoistAdapter implements TodoistDestination {
       if (cursor) query.set("cursor", cursor);
       const response = await this.request(`/tasks?${query.toString()}`, { method: "GET", ...options });
       const page = PaginatedTasksSchema.parse(await response!.json());
-      tasks.push(...page.results.map(normalize));
+      tasks.push(...page.results.map((task) => normalize(task)));
       cursor = page.next_cursor ?? undefined;
     } while (cursor);
     return tasks;
@@ -96,26 +106,40 @@ export class TodoistAdapter implements TodoistDestination {
       headers: { "X-Request-Id": requestId },
       body: JSON.stringify(this.payload(input, true)),
     });
-    return normalize(TodoistTaskSchema.parse(await response!.json()));
+    const raw = TodoistTaskSchema.parse(await response!.json());
+    return normalize(raw, input.projectId ? undefined : raw.project_id ?? undefined);
   }
 
   public async updateTask(id: string, input: TodoistTaskInput, requestId: string): Promise<TodoistTask> {
     const current = await this.getTask(id);
     if (!current) throw new Error(`Todoist task ${id} no longer exists`);
+    const inboxProjectId = await this.inboxProjectId();
+    const destinationChanged = current.projectId !== input.projectId || current.sectionId !== input.sectionId;
+    let destination: { section_id: string } | { project_id: string } | undefined;
+    if (destinationChanged) {
+      destination = input.sectionId
+        ? { section_id: input.sectionId }
+        : input.projectId
+          ? { project_id: input.projectId }
+          : undefined;
+      if (!destination) {
+        if (!inboxProjectId) throw new Error("Todoist Inbox project could not be identified");
+        destination = { project_id: inboxProjectId };
+      }
+    }
     let response = await this.request(`/tasks/${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "X-Request-Id": requestId },
       body: JSON.stringify(this.payload(input, false)),
     });
-    let updated = normalize(TodoistTaskSchema.parse(await response!.json()));
-    const destinationChanged = current.projectId !== input.projectId || current.sectionId !== input.sectionId;
-    if (destinationChanged && (input.sectionId || input.projectId)) {
+    let updated = normalize(TodoistTaskSchema.parse(await response!.json()), inboxProjectId);
+    if (destination) {
       response = await this.request(`/tasks/${encodeURIComponent(id)}/move`, {
         method: "POST",
-        headers: { "X-Request-Id": requestId },
-        body: JSON.stringify(input.sectionId ? { section_id: input.sectionId } : { project_id: input.projectId }),
+        headers: { "X-Request-Id": derivedRequestId(requestId, "move") },
+        body: JSON.stringify(destination),
       });
-      updated = normalize(TodoistTaskSchema.parse(await response!.json()));
+      updated = normalize(TodoistTaskSchema.parse(await response!.json()), inboxProjectId);
     }
     return updated;
   }
@@ -139,9 +163,9 @@ export class TodoistAdapter implements TodoistDestination {
   }
 
   public async listDestinations(options: { signal?: AbortSignal } = {}): Promise<DestinationCatalog> {
-    const projectRows = await this.listResources("/projects", options);
+    const projectRows = await this.listProjects(options);
     const sectionRows = await this.listResources("/sections", options);
-    const projects: DestinationProject[] = projectRows.map((value) => ({ id: value.id, name: value.name }));
+    const projects: DestinationProject[] = projectRows.map((value) => ({ id: value.id, name: value.name, ...(value.inbox_project ? { isInbox: true } : {}) }));
     const sections: DestinationSection[] = sectionRows
       .filter((value): value is typeof value & { project_id: string } => Boolean(value.project_id))
       .map((value) => ({ id: value.id, name: value.name, projectId: value.project_id }));
@@ -165,8 +189,22 @@ export class TodoistAdapter implements TodoistDestination {
     };
   }
 
-  private async listResources(path: string, options: { signal?: AbortSignal } = {}): Promise<Array<z.infer<typeof NamedResourcePageSchema>["results"][number]>> {
-    const results: Array<z.infer<typeof NamedResourcePageSchema>["results"][number]> = [];
+  private async listProjects(options: { signal?: AbortSignal } = {}): Promise<NamedResource[]> {
+    if (!this.projectCatalog) {
+      this.projectCatalog = this.listResources("/projects", options).catch((error: unknown) => {
+        this.projectCatalog = undefined;
+        throw error;
+      });
+    }
+    return this.projectCatalog;
+  }
+
+  private async inboxProjectId(options: { signal?: AbortSignal } = {}): Promise<string | undefined> {
+    return (await this.listProjects(options)).find((project) => project.inbox_project)?.id;
+  }
+
+  private async listResources(path: string, options: { signal?: AbortSignal } = {}): Promise<NamedResource[]> {
+    const results: NamedResource[] = [];
     let cursor: string | undefined;
     do {
       options.signal?.throwIfAborted();

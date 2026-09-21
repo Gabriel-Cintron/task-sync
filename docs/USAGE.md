@@ -40,7 +40,7 @@ Confirm that the CLI starts:
 npm run cli -- --help
 ```
 
-The `.env`, `task-sync.config.json`, OAuth files, and local SQLite database contain personal configuration or data. Do not commit them. The provided `.gitignore` already excludes the sensitive files and database.
+The `.env`, `task-sync.config.json`, OAuth files, and local SQLite database contain personal configuration or data. They are plaintext local files (owner-only permissions are applied where supported), so use operating-system account security and full-disk encryption where appropriate. Do not commit them. The provided `.gitignore` already excludes the sensitive files and database.
 
 ## 3. Configure Todoist
 

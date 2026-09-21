@@ -3,12 +3,13 @@
 A local Electron desktop application and TypeScript CLI that read assignments from Canvas (and optionally Google Classroom), optionally use OpenAI to clean and classify them, and plan safe Todoist creates or updates. External writes are deterministic and opt-in.
 
 For the guided application, see the [desktop guide](docs/DESKTOP.md). For terminal setup and commands, see the [CLI usage guide](docs/USAGE.md).
+The latest public-readiness findings and accepted limitations are in the [pre-publication security review](docs/SECURITY-REVIEW.md).
 
 ## What is implemented
 
 - A packaged, framework-light Electron UI with guided onboarding, provider diagnostics, Canvas course filtering, Todoist destination mapping, light/dark themes, exact-plan review/apply, and recent history.
 - A sandboxed renderer with context isolation, narrow Zod-validated IPC, local-only assets, restrictive CSP, denied permissions/navigation/downloads, hardened Electron fuses, and write-only credential fields.
-- Desktop-owned atomic settings/secrets, a validated copy-based CLI importer with backups/rollback, and platform-specific application-data paths.
+- Desktop-owned atomic settings/secrets, a validated SQLite-backup-based CLI importer with backups/rollback, and platform-specific application-data paths.
 - Windows x64 Squirrel, macOS x64/arm64 DMG/ZIP, and Linux x64 DEB/ZIP packaging with unsigned GitHub release artifacts.
 - Canvas active-course and assignment reads, including current-user submission state and opaque `Link` pagination.
 - Google Classroom active-course, coursework, and current-student submission reads using read-only OAuth scopes.
@@ -74,7 +75,7 @@ Enrichment modes:
 - `required`: report an item error and do not write it if enrichment fails.
 - `disabled`: never call OpenAI.
 
-Set `--force-reenrich` to bypass the versioned cache. Cached keys combine a content fingerprint, prompt version, schema version, and model.
+Set `--force-reenrich` to bypass the versioned cache. Cached keys combine a content fingerprint, prompt version, schema version, model, destination keys, label allowlist, and description limit.
 
 ## Credentials
 
@@ -94,7 +95,7 @@ Create an OAuth **Desktop app** client in a Google Cloud project with the Classr
 npm run cli -- auth classroom
 ```
 
-The command prints a Google consent URL and listens only on the loopback redirect URI from the client file. It requests these minimum read-only scopes:
+The command starts a listener on a random loopback port before presenting the Google consent URL. The callback validates an unpredictable OAuth state value and uses PKCE. It requests these minimum read-only scopes:
 
 - `classroom.courses.readonly`
 - `classroom.coursework.me.readonly`
@@ -150,10 +151,10 @@ npm run sync -- --source all --apply
 - Source deadlines always override inferred deadlines. Inferences are accepted only when no source deadline exists and confidence meets the configured threshold.
 - The LLM never receives credentials, calls Todoist, chooses arbitrary labels/projects, or determines identity/deduplication.
 - Every task description contains a stable machine marker and source link. One marker match can recover a lost local mapping; multiple matches are a conflict. A missing mapped task is also a conflict, never an automatic duplicate create.
-- The destination fingerprint covers title, description, destination, labels, and date-only deadline. Local source changes and manual Todoist drift cause an update; unchanged items cause neither an LLM call nor a write.
+- The destination fingerprint covers title, description, destination, labels, deadline precision, and the full canonical due datetime or date. Local source changes and manual Todoist drift cause an update; unchanged items cause neither an LLM call nor a write.
 - A failed write leaves the existing mapping intact for retry.
 - Submitted/completed items default to `skip`. Missing LMS items are retained. The app never auto-completes or deletes a Todoist task.
-- Todoist request IDs are deterministic per saved plan action for provider-side retry safety.
+- Todoist request IDs are deterministic and distinct for each create, update, and move operation. Stable markers and the local mapping remain the primary duplicate-recovery mechanism.
 
 ## Diagnostics
 
@@ -176,11 +177,13 @@ npm run cli -- enrich-fixture
 
 Tests mock all third-party behavior. Live checks are separate and opt-in.
 
+The desktop build packages are pinned to Electron Forge `8.0.0-alpha.10`. Forge 7's supported packager still depends on a vulnerable archive extractor; the pinned Forge 8 build uses the patched Packager 20 line and is covered by the packaged Electron smoke tests. Reassess this pin when Forge 8 becomes stable.
+
 To add a future source, implement `SourceAdapter`, normalize every record into `ExternalItem`, validate raw provider payloads, and register the adapter in `src/composition.ts`. The sync engine does not need modification. A test-only fake proves this extension path.
 
 ## Local data and future deployment
 
-The SQLite file is local and gitignored. Access tokens are not stored in sync tables. Back it up or remove it according to your own privacy needs.
+The SQLite file is local and gitignored. Access tokens are not stored in sync tables, but source records and task history may contain assignment names and descriptions. Credentials, OAuth tokens, configuration, and the database are stored as local plaintext files with owner-only permissions where the operating system supports them; they are not a substitute for full-disk encryption. Back them up or remove them according to your own privacy needs.
 
 A future scheduler can invoke the same dry-run/apply CLI, but scheduling is intentionally not included. A future multi-user service would require encrypted token storage, per-user connections, OAuth callbacks, tenant isolation, audit controls, and a dedicated security review.
 
@@ -190,3 +193,7 @@ A future scheduler can invoke the same dry-run/apply CLI, but scheduling is inte
 - [Canvas assignments](https://canvas.instructure.com/doc/api/assignments.html) and [pagination](https://developerdocs.instructure.com/services/canvas/basics/file.pagination)
 - [Google Classroom coursework/submissions](https://developers.google.com/workspace/classroom/guides/manage-coursework)
 - [Todoist API v1](https://developer.todoist.com/api/v1/)
+
+## License
+
+Copyright © 2026 Gabriel Cintron. All rights reserved. The repository is source-available for viewing and evaluation; it is not currently distributed under an open-source license. See [LICENSE](LICENSE).

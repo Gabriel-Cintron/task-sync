@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   build: {
-    sourcemap: true,
+    sourcemap: false,
     minify: false,
     lib: {
       entry: "src/desktop/main.ts",

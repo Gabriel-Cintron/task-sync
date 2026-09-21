@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config.js";
-import { enrichmentInputFingerprint, sha256 } from "../core/hash.js";
+import { enrichmentInputFingerprint, sha256, stableJson } from "../core/hash.js";
 import {
   TaskEnrichmentSchema,
   type EnrichmentProvenance,
@@ -50,6 +50,11 @@ export class CachedEnrichmentService implements EnrichmentService {
       PROMPT_VERSION,
       SCHEMA_VERSION,
       this.config.enrichment.model,
+      stableJson({
+        allowedLabels: [...this.config.enrichment.allowedLabels].sort(),
+        allowedProjectKeys: Object.keys(this.config.destinations).sort(),
+        maxDescriptionCharacters: this.config.enrichment.maxDescriptionCharacters,
+      }),
     ].join(":"));
 
     if (this.config.enrichment.mode === "disabled") {

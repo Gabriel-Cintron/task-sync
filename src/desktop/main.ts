@@ -64,10 +64,10 @@ function registerIpcHandlers(): void {
   handle(IPC.listRecentRuns, (_event, input) => validated(z.array(RunSummarySchema), application.listRecentRuns(z.number().int().min(1).max(100).default(20).parse(input))));
   handle(IPC.getRun, (_event, input) => validated(RunDetailSchema, application.getRun(z.string().uuid().parse(input))));
   handle(IPC.chooseFile, async (_event, input) => chooseFile(z.enum(["env", "config", "database", "google-client", "google-token"]).parse(input)));
-  handle(IPC.authorizeClassroom, () => validated(SetupStatusSchema, application.authorizeClassroom((url) => {
+  handle(IPC.authorizeClassroom, () => validated(SetupStatusSchema, application.authorizeClassroom(async (url) => {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" || parsed.hostname !== "accounts.google.com") throw new Error("Rejected unexpected Google authorization URL");
-    void shell.openExternal(parsed.toString());
+    await shell.openExternal(parsed.toString());
   })));
   handle(IPC.openExternal, async (_event, input) => {
     const parsed = new URL(z.string().url().parse(input));
@@ -112,7 +112,6 @@ async function createWindow(): Promise<void> {
     show: false,
     backgroundColor: "#f5f4ef",
     title: "Task Sync",
-    windowStatePersistence: true,
     name: "main",
     webPreferences: {
       preload: join(__dirname, "preload.js"),

@@ -8,6 +8,10 @@ export default tseslint.config(
     ignores: ["dist/**", "**/.vite/**", "out/**", "out-locked/**", "desktop-out/**", "coverage/**", "node_modules/**", "eslint.config.js", "forge.config.cjs", "vite.*.config.mjs"],
   },
   {
+    files: ["scripts/**/*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
+  },
+  {
     files: ["**/*.ts"],
     languageOptions: {
       parserOptions: {

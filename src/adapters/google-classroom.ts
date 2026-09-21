@@ -1,10 +1,13 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { URL } from "node:url";
+import { CodeChallengeMethod } from "google-auth-library";
 import { google } from "googleapis";
 import { z } from "zod";
 import { ProviderError } from "../core/errors.js";
+import { DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS } from "../core/fetch-with-timeout.js";
 import { externalItemFingerprint } from "../core/hash.js";
 import { ExternalItemSchema, type ExternalItem } from "../core/models.js";
 import type { DiagnosticReport, SourceAdapter } from "../core/ports.js";
@@ -66,7 +69,7 @@ export function normalizeClassroomCourseWork(
   const submission = submissionInput ? SubmissionSchema.parse(submissionInput) : undefined;
   const deadline = dueAt(work);
   const base = {
-    ref: { sourceType: "google_classroom", connectionId, externalId: work.id },
+    ref: { sourceType: "google_classroom", connectionId, externalId: `${course.id}:${work.id}` },
     kind: "assignment" as const,
     course: { externalId: course.id, name: course.name },
     title: work.title,
@@ -75,7 +78,10 @@ export function normalizeClassroomCourseWork(
     ...(work.alternateLink ? { sourceUrl: work.alternateLink } : {}),
     status: submissionStatus(submission?.state),
     ...(work.updateTime ? { sourceUpdatedAt: work.updateTime } : {}),
-    providerMetadata: { classroomSubmissionState: submission?.state ?? null },
+    providerMetadata: {
+      classroomSubmissionState: submission?.state ?? null,
+      legacyExternalId: work.id,
+    },
   };
   return ExternalItemSchema.parse({ ...base, rawFingerprint: externalItemFingerprint(base) });
 }
@@ -89,42 +95,96 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     private readonly tokenFile: string,
   ) {}
 
-  public async authorize(options: { onAuthorizationUrl?: (url: string) => void } = {}): Promise<void> {
-    const { client, redirectUri } = this.createClient();
-    const authUrl = client.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: CLASSROOM_SCOPES });
-    if (options.onAuthorizationUrl) options.onAuthorizationUrl(authUrl);
-    else process.stdout.write(`Open this URL to authorize Google Classroom:\n${authUrl}\n`);
-    const code = await new Promise<string>((resolve, reject) => {
-      const redirect = new URL(redirectUri);
-      const server = createServer((request, response) => {
-        const requestUrl = new URL(request.url ?? "/", redirectUri);
-        const codeValue = requestUrl.searchParams.get("code");
-        const error = requestUrl.searchParams.get("error");
-        if (error || !codeValue) {
-          response.writeHead(400).end("Authorization failed. Return to the terminal.");
-          clearTimeout(timeout);
-          server.close();
-          reject(new ProviderError(error === "access_denied" ? "oauth_consent" : "application", error ?? "OAuth callback had no code"));
-          return;
-        }
-        response.writeHead(200, { "Content-Type": "text/plain" }).end("Authorization complete. You can close this tab.");
-        clearTimeout(timeout);
-        server.close();
-        resolve(codeValue);
-      });
-      const timeout = setTimeout(() => {
-        server.close();
-        reject(new ProviderError("oauth_consent", "Google authorization timed out"));
-      }, 180_000).unref();
-      server.on("error", reject);
-      server.listen(Number(redirect.port), redirect.hostname);
+  public async authorize(options: { onAuthorizationUrl?: (url: string) => void | Promise<void> } = {}): Promise<void> {
+    const state = randomBytes(32).toString("base64url");
+    let redirectUri = "http://127.0.0.1/oauth2callback";
+    let timeout: NodeJS.Timeout | undefined;
+    let settled = false;
+    let resolveCode!: (code: string) => void;
+    let rejectCode!: (error: Error) => void;
+    const codePromise = new Promise<string>((resolve, reject) => {
+      resolveCode = resolve;
+      rejectCode = reject;
     });
-    const { tokens } = await client.getToken(code);
-    mkdirSync(dirname(this.tokenFile), { recursive: true });
-    const temporary = `${this.tokenFile}.${process.pid}.tmp`;
-    writeFileSync(temporary, JSON.stringify(tokens, null, 2), { mode: 0o600 });
-    renameSync(temporary, this.tokenFile);
-    chmodSync(this.tokenFile, 0o600);
+    function finish(error?: Error, code?: string): void {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      server.close();
+      if (error) rejectCode(error);
+      else resolveCode(code!);
+    }
+    const server = createServer((request, response) => {
+      let requestUrl: URL;
+      try {
+        requestUrl = new URL(request.url ?? "/", redirectUri);
+      } catch {
+        response.writeHead(400, { "Content-Type": "text/plain", "Cache-Control": "no-store" }).end("Invalid request");
+        return;
+      }
+      if (request.method !== "GET" || requestUrl.pathname !== "/oauth2callback") {
+        response.writeHead(404, { "Content-Type": "text/plain", "Cache-Control": "no-store" }).end("Not found");
+        return;
+      }
+      const returnedState = requestUrl.searchParams.get("state");
+      const codeValue = requestUrl.searchParams.get("code");
+      const error = requestUrl.searchParams.get("error");
+      if (returnedState !== state) {
+        response.writeHead(400, { "Content-Type": "text/plain", "Cache-Control": "no-store" }).end("Authorization state did not match.");
+        finish(new ProviderError("oauth_consent", "Google authorization state did not match"));
+        return;
+      }
+      if (error || !codeValue) {
+        response.writeHead(400, { "Content-Type": "text/plain", "Cache-Control": "no-store" }).end("Authorization failed. Return to Task Sync.");
+        finish(new ProviderError(error === "access_denied" ? "oauth_consent" : "application", error ?? "OAuth callback had no code"));
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" }).end("Authorization complete. You can close this tab.");
+      finish(undefined, codeValue);
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new ProviderError("application", "Could not establish the Google authorization callback");
+    }
+    server.on("error", (error) => finish(new ProviderError("application", `Google authorization callback failed: ${error.message}`)));
+    redirectUri = `http://127.0.0.1:${address.port}/oauth2callback`;
+    try {
+      const client = this.createClient(redirectUri);
+      const verifier = await client.generateCodeVerifierAsync();
+      if (!verifier.codeChallenge) throw new ProviderError("application", "Google OAuth did not generate a PKCE challenge");
+      const authUrl = client.generateAuthUrl({
+        access_type: "offline",
+        prompt: "consent",
+        scope: CLASSROOM_SCOPES,
+        state,
+        code_challenge: verifier.codeChallenge,
+        code_challenge_method: CodeChallengeMethod.S256,
+      });
+      timeout = setTimeout(() => finish(new ProviderError("oauth_consent", "Google authorization timed out")), 180_000).unref();
+      if (options.onAuthorizationUrl) await options.onAuthorizationUrl(authUrl);
+      else process.stdout.write(`Open this URL to authorize Google Classroom:\n${authUrl}\n`);
+      const code = await codePromise;
+      const { tokens } = await client.getToken({ code, codeVerifier: verifier.codeVerifier });
+      mkdirSync(dirname(this.tokenFile), { recursive: true });
+      const temporary = `${this.tokenFile}.${process.pid}.tmp`;
+      writeFileSync(temporary, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+      renameSync(temporary, this.tokenFile);
+      chmodSync(this.tokenFile, 0o600);
+    } finally {
+      if (!settled) {
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        server.close();
+      }
+    }
   }
 
   public async listItems(options: { signal?: AbortSignal } = {}): Promise<ExternalItem[]> {
@@ -164,20 +224,23 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     };
   }
 
-  private createClient(): { client: OAuthClient; redirectUri: string } {
+  private clientSecret(): z.infer<typeof ClientSecretSchema>["installed"] {
     let raw: unknown;
     try {
       raw = JSON.parse(readFileSync(this.clientSecretFile, "utf8")) as unknown;
     } catch (error) {
       throw new ProviderError("configuration", `Cannot read Google OAuth client file: ${error instanceof Error ? error.message : "unknown error"}`);
     }
-    const secret = ClientSecretSchema.parse(raw).installed;
-    const redirectUri = "http://127.0.0.1:53682/oauth2callback";
-    return { client: new google.auth.OAuth2(secret.client_id, secret.client_secret, redirectUri), redirectUri };
+    return ClientSecretSchema.parse(raw).installed;
+  }
+
+  private createClient(redirectUri?: string): OAuthClient {
+    const secret = this.clientSecret();
+    return new google.auth.OAuth2(secret.client_id, secret.client_secret, redirectUri ?? secret.redirect_uris[0]);
   }
 
   private authenticatedClient(): OAuthClient {
-    const { client } = this.createClient();
+    const client = this.createClient();
     try {
       client.setCredentials(JSON.parse(readFileSync(this.tokenFile, "utf8")) as Record<string, unknown>);
     } catch {
@@ -191,7 +254,10 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     let pageToken: string | undefined;
     do {
       signal?.throwIfAborted();
-      const response = await classroom.courses.list({ courseStates: ["ACTIVE"], pageSize: 100, ...(pageToken ? { pageToken } : {}) });
+      const response = await classroom.courses.list(
+        { courseStates: ["ACTIVE"], pageSize: 100, ...(pageToken ? { pageToken } : {}) },
+        { timeout: DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) },
+      );
       all.push(...z.array(CourseSchema).parse(response.data.courses ?? []));
       pageToken = response.data.nextPageToken ?? undefined;
     } while (pageToken);
@@ -203,7 +269,10 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     let pageToken: string | undefined;
     do {
       signal?.throwIfAborted();
-      const response = await classroom.courses.courseWork.list({ courseId, courseWorkStates: ["PUBLISHED"], pageSize: 100, ...(pageToken ? { pageToken } : {}) });
+      const response = await classroom.courses.courseWork.list(
+        { courseId, courseWorkStates: ["PUBLISHED"], pageSize: 100, ...(pageToken ? { pageToken } : {}) },
+        { timeout: DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) },
+      );
       all.push(...z.array(CourseWorkSchema).parse(response.data.courseWork ?? []));
       pageToken = response.data.nextPageToken ?? undefined;
     } while (pageToken);
@@ -215,13 +284,16 @@ export class GoogleClassroomAdapter implements SourceAdapter {
     let pageToken: string | undefined;
     do {
       signal?.throwIfAborted();
-      const response = await classroom.courses.courseWork.studentSubmissions.list({
-        courseId,
-        courseWorkId: "-",
-        userId: "me",
-        pageSize: 100,
-        ...(pageToken ? { pageToken } : {}),
-      });
+      const response = await classroom.courses.courseWork.studentSubmissions.list(
+        {
+          courseId,
+          courseWorkId: "-",
+          userId: "me",
+          pageSize: 100,
+          ...(pageToken ? { pageToken } : {}),
+        },
+        { timeout: DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) },
+      );
       all.push(...z.array(SubmissionSchema).parse(response.data.studentSubmissions ?? []));
       pageToken = response.data.nextPageToken ?? undefined;
     } while (pageToken);
